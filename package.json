@@ -1,7 +1,6 @@
 {
   "name": "huddle60",
   "version": "0.1.0",
-  "private": true,
   "description": "huddle60: a 60-second huddle between PO, DEV and AI on GitHub. Gemini planning, hash-locked requirements and PR gates (AI-DLC).",
   "type": "module",
   "engines": {
@@ -17,7 +16,7 @@
   ],
   "scripts": {
     "build": "node scripts/build.mjs",
-    "prepare": "node scripts/build.mjs",
+    "prepublishOnly": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
