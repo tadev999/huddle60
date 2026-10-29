@@ -2,7 +2,7 @@ import { appendFile, readFile } from "node:fs/promises";
 import { GitBranchEvidenceStore } from "../adapters/git-evidence.js";
 import { connectRepository, octokitFromToken } from "../adapters/github.js";
 import { createJsonLogger } from "../adapters/memory.js";
-import { POLICY_PATH, parsePolicy } from "../core/policy.js";
+import { POLICY_PATH, LEGACY_POLICY_PATH, parsePolicy } from "../core/policy.js";
 import { systemClock } from "../ports.js";
 import { WorkflowService } from "../workflow/service.js";
 
@@ -17,17 +17,24 @@ async function main(): Promise<void> {
     sender?: { type?: string };
   };
   const [owner, repo] = requireEnv("GITHUB_REPOSITORY").split("/") as [string, string];
-  const logger = createJsonLogger({ component: "ai-dlc-action", event: eventName });
-  const octokit = octokitFromToken(requireEnv("AI_DLC_TOKEN"));
+  const logger = createJsonLogger({ component: "huddle60-action", event: eventName });
+  const token =
+    process.env.HUDDLE60_TOKEN ||
+    process.env.AI_DLC_TOKEN ||
+    requireEnv("HUDDLE60_TOKEN or AI_DLC_TOKEN");
+  const octokit = octokitFromToken(token);
   const github = await connectRepository(octokit, owner, repo);
-  const policySource = await github.readFile(POLICY_PATH, await github.getDefaultBranch());
-  const branch = policySource ? parsePolicy(policySource).evidence.branch : "ai-dlc-evidence";
+  let policySource = await github.readFile(POLICY_PATH, await github.getDefaultBranch());
+  if (!policySource) {
+    policySource = await github.readFile(LEGACY_POLICY_PATH, await github.getDefaultBranch());
+  }
+  const branch = policySource ? parsePolicy(policySource).evidence.branch : "huddle60-evidence";
   const workflow = new WorkflowService({
     github,
     evidence: new GitBranchEvidenceStore(octokit, owner, repo, branch),
     clock: systemClock,
     logger,
-    enabled: process.env.AI_DLC_ENABLED !== "false",
+    enabled: process.env.HUDDLE60_ENABLED !== "false" && process.env.AI_DLC_ENABLED !== "false",
   });
 
   if (eventName === "issue_comment") {
@@ -45,7 +52,7 @@ async function main(): Promise<void> {
   if (eventName === "pull_request_target" && payload.pull_request) {
     const result = await workflow.checkPullRequest(payload.pull_request.number);
     await summary([
-      `### ai-dlc/baseline: ${result.state}`,
+      `### huddle60/baseline: ${result.state}`,
       "",
       result.description,
       ...result.details.map((line) => `> ${line}`),

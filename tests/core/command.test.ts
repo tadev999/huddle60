@@ -17,36 +17,39 @@ function expectSyntaxError(body: string, message: RegExp) {
 describe("parseCommand", () => {
   it("parses arguments and the free-form note", () => {
     const command = parseCommand(
-      "/ai-dlc refine plan=plan-1-r1-abcd\r\nDùng Google login\nKhông cần đăng ký",
+      "/huddle60 refine plan=plan-1-r1-abcd\r\nDùng Google login\nKhông cần đăng ký",
     );
     expect(command).toEqual({
       name: "refine",
       args: { plan: "plan-1-r1-abcd" },
       note: "Dùng Google login\nKhông cần đăng ký",
     });
+    const legacy = parseCommand("/ai-dlc baseline");
+    expect(legacy.name).toBe("baseline");
   });
 
   it("supports quoted values with spaces and escapes", () => {
-    const command = parseCommand('/ai-dlc revoke decision=dec-1 reason="sai baseline \\"cũ\\""');
+    const command = parseCommand('/huddle60 revoke decision=dec-1 reason="sai baseline \\"cũ\\""');
     expect(command.args).toEqual({ decision: "dec-1", reason: 'sai baseline "cũ"' });
   });
 
   it("only accepts the command on the first line", () => {
-    expectSyntaxError("Xin chào\n/ai-dlc baseline", /first line/u);
-    expectSyntaxError("> /ai-dlc baseline", /first line/u);
-    expectSyntaxError("```\n/ai-dlc baseline\n```", /first line/u);
-    expect(looksLikeCommand("> /ai-dlc baseline")).toBe(false);
+    expectSyntaxError("Xin chào\n/huddle60 baseline", /first line/u);
+    expectSyntaxError("> /huddle60 baseline", /first line/u);
+    expectSyntaxError("```\n/huddle60 baseline\n```", /first line/u);
+    expect(looksLikeCommand("> /huddle60 baseline")).toBe(false);
+    expect(looksLikeCommand("/huddle60 baseline")).toBe(true);
+    expect(looksLikeCommand("/huddle60x baseline")).toBe(false);
     expect(looksLikeCommand("/ai-dlc baseline")).toBe(true);
-    expect(looksLikeCommand("/ai-dlcx baseline")).toBe(false);
   });
 
   it("rejects unknown commands, unknown, duplicate, empty and missing arguments", () => {
-    expectSyntaxError("/ai-dlc deploy", /Unknown command/u);
-    expectSyntaxError("/ai-dlc approve baseline=bl-1 hash=x extra=1", /Unknown argument/u);
-    expectSyntaxError("/ai-dlc approve baseline=a baseline=b hash=x", /Duplicate/u);
-    expectSyntaxError('/ai-dlc approve baseline="" hash=x', /empty/u);
-    expectSyntaxError("/ai-dlc ready baseline=bl-1 hash=x", /Missing argument\(s\).*lane/u);
-    expectSyntaxError("/ai-dlc approve bl-1", /Unexpected token/u);
+    expectSyntaxError("/huddle60 deploy", /Unknown command/u);
+    expectSyntaxError("/huddle60 approve baseline=bl-1 hash=x extra=1", /Unknown argument/u);
+    expectSyntaxError("/huddle60 approve baseline=a baseline=b hash=x", /Duplicate/u);
+    expectSyntaxError('/huddle60 approve baseline="" hash=x', /empty/u);
+    expectSyntaxError("/huddle60 ready baseline=bl-1 hash=x", /Missing argument\(s\).*lane/u);
+    expectSyntaxError("/huddle60 approve bl-1", /Unexpected token/u);
   });
 
   it("routes planner and deterministic commands to different handlers", () => {

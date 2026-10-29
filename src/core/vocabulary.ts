@@ -3,6 +3,19 @@
  * reads them back from Issues. Renaming one is a breaking change.
  */
 export const LABELS = {
+  request: "huddle60:request",
+  planDraft: "huddle60:plan-draft",
+  planCreated: "huddle60:plan-created",
+  planPartial: "huddle60:plan-partial",
+  fromPlan: "huddle60:from-plan",
+  stale: "huddle60:stale",
+  exempt: "huddle60:exempt",
+  epic: "type:epic",
+  story: "type:story",
+  task: "type:task",
+} as const;
+
+export const LEGACY_LABELS = {
   request: "ai-dlc:request",
   planDraft: "ai-dlc:plan-draft",
   planCreated: "ai-dlc:plan-created",
@@ -10,9 +23,6 @@ export const LABELS = {
   fromPlan: "ai-dlc:from-plan",
   stale: "ai-dlc:stale",
   exempt: "ai-dlc:exempt",
-  epic: "type:epic",
-  story: "type:story",
-  task: "type:task",
 } as const;
 
 export type WorkItemKind = "epic" | "story" | "task";

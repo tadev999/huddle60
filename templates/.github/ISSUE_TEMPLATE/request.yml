@@ -1,18 +1,18 @@
-name: AI-DLC Request
+name: huddle60 Request
 description: Mô tả nhu cầu bằng một câu; AI đề xuất Epic/Story/Task để PO xác nhận.
 title: "[Request] "
-labels: ["ai-dlc:request"]
+labels: ["huddle60:request"]
 body:
   - type: markdown
     attributes:
       value: |
-        Chỉ PO được cấu hình trong `.github/ai-dlc/policy.yml` mới kích hoạt AI planner.
+        Chỉ PO được cấu hình trong `.github/huddle60/policy.yml` mới kích hoạt AI planner.
         AI chỉ đề xuất; chưa có Issue nào được tạo cho đến khi PO xác nhận.
   - type: textarea
     id: request
     attributes:
       label: Yêu cầu
       description: Mô tả kết quả mong muốn bằng ngôn ngữ tự nhiên.
-      placeholder: Lập trình login sử dụng Firebase
+      placeholder: Xây dựng tính năng đăng nhập Google OAuth
     validations:
       required: true

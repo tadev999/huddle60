@@ -20,6 +20,7 @@ import {
 import { AiDlcError, isAiDlcError } from "../core/errors.js";
 import {
   POLICY_PATH,
+  LEGACY_POLICY_PATH,
   hasRole,
   isSensitive,
   parsePolicy,
@@ -31,7 +32,7 @@ import { marker, sanitize } from "../core/render.js";
 import { LABELS, kindFromLabels } from "../core/vocabulary.js";
 import type { Clock, CommentData, EvidenceStore, GitHubPort, IssueData, Logger } from "../ports.js";
 
-export const STATUS_CONTEXT = "ai-dlc/baseline";
+export const STATUS_CONTEXT = "huddle60/baseline";
 
 export interface WorkflowDeps {
   github: GitHubPort;
@@ -61,7 +62,10 @@ export class WorkflowService {
   async policy(): Promise<Policy> {
     if (this.policyCache) return this.policyCache;
     const branch = await this.deps.github.getDefaultBranch();
-    const source = await this.deps.github.readFile(POLICY_PATH, branch);
+    let source = await this.deps.github.readFile(POLICY_PATH, branch);
+    if (source === null) {
+      source = await this.deps.github.readFile(LEGACY_POLICY_PATH, branch);
+    }
     if (source === null)
       throw new AiDlcError("E_POLICY_INVALID", `Missing ${POLICY_PATH} on ${branch}.`);
     this.policyCache = parsePolicy(source);
@@ -171,11 +175,11 @@ export class WorkflowService {
       "",
       "PO duyệt nghiệp vụ:",
       "```text",
-      `/ai-dlc approve baseline=${snapshot.baselineId} hash=${snapshot.contentHash}`,
+      `/huddle60 approve baseline=${snapshot.baselineId} hash=${snapshot.contentHash}`,
       "```",
       "DEV xác nhận sẵn sàng (lane: fast | standard | strict):",
       "```text",
-      `/ai-dlc ready baseline=${snapshot.baselineId} hash=${snapshot.contentHash} lane=standard`,
+      `/huddle60 ready baseline=${snapshot.baselineId} hash=${snapshot.contentHash} lane=standard`,
       "```",
     ].join("\n");
   }
@@ -228,7 +232,7 @@ export class WorkflowService {
     if (this.snapshotOf(issue).contentHash !== snapshot.contentHash) {
       throw new AiDlcError(
         "E_STALE",
-        "The Issue changed after this baseline was created. Run `/ai-dlc baseline` again and decide on the new baseline.",
+        "The Issue changed after this baseline was created. Run `/huddle60 baseline` again and decide on the new baseline.",
       );
     }
   }
@@ -500,7 +504,7 @@ export class WorkflowService {
         })
       : {
           state: "pending" as const,
-          description: "AI-DLC is disabled by the operator",
+          description: "huddle60 is disabled by the operator",
           details: [],
         };
     await this.deps.github.setCommitStatus(pr.headSha, {
@@ -532,12 +536,12 @@ export class WorkflowService {
     if (!block)
       throw new AiDlcError(
         "E_PR_BLOCK",
-        "PR body has no AI-DLC block. Run the context CLI or use the ready reply.",
+        "PR body has no huddle60 block. Run the context CLI or use the ready reply.",
       );
     const issue = await github.getIssue(block.issueNumber);
     const snapshot = await this.loadSnapshot(issue.number, block.baselineId);
     if (snapshot.contentHash !== block.hash)
-      throw new AiDlcError("E_HASH_MISMATCH", "AI-DLC-Hash does not match the baseline.");
+      throw new AiDlcError("E_HASH_MISMATCH", "HUDDLE60-Hash does not match the baseline.");
     if (snapshot.kind === "epic")
       throw new AiDlcError("E_PR_BLOCK", "A PR must reference a story or task, not an epic.");
     this.assertCurrent(issue, snapshot);
@@ -632,7 +636,7 @@ export class WorkflowService {
 }
 
 function errorReply(error: AiDlcError): string {
-  return [`**AI-DLC: \`${error.code}\`**`, "", sanitize(error.message)].join("\n");
+  return [`**huddle60: \`${error.code}\`**`, "", sanitize(error.message)].join("\n");
 }
 
 function firstLine(text: string): string {

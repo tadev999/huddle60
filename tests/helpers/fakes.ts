@@ -123,8 +123,13 @@ export class FakeGitHub implements LocalGitHubPort {
   }
 
   botComment(issueNumber: number, marker: string): string | undefined {
+    const altMarker = marker.startsWith("ai-dlc:")
+      ? marker.replace(/^ai-dlc:/, "huddle60:")
+      : marker.replace(/^huddle60:/, "ai-dlc:");
     return this.commentsOn(issueNumber).find(
-      (comment) => comment.author.type === "Bot" && comment.body.includes(marker),
+      (comment) =>
+        comment.author.type === "Bot" &&
+        (comment.body.includes(marker) || comment.body.includes(altMarker)),
     )?.body;
   }
 

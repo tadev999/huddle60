@@ -1,7 +1,6 @@
 import { build } from "esbuild";
 
 const entryPoints = {
-  "planner-server": "src/entry/planner-server.ts",
   action: "src/entry/action.ts",
   cli: "src/entry/cli.ts",
 };
@@ -19,7 +18,7 @@ const shared = {
 
 await build({
   ...shared,
-  entryPoints: { "planner-server": entryPoints["planner-server"], action: entryPoints.action },
+  entryPoints: { action: entryPoints.action },
 });
 
 await build({

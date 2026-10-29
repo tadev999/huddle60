@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="470" viewBox="0 0 960 470" role="img" aria-labelledby="title desc">
-  <title id="title">AI-DLC: từ một câu yêu cầu đến tính năng đã nghiệm thu</title>
+  <title id="title">Huddle60: từ một câu yêu cầu đến tính năng đã nghiệm thu</title>
   <desc id="desc">PO nhập một câu trên GitHub Issue, AI đề xuất cây Epic, Story, Task, PO xác nhận để tạo Issues, DEV làm trong IDE theo baseline đã chốt, Pull Request được kiểm tra tự động, PO nghiệm thu build.</desc>
   <style>
     .bg { fill: #f6f8fa; stroke: #d0d7de; }
@@ -50,7 +50,7 @@
     <path class="po" d="M30 90 a10 10 0 0 1 10 -10 h260 a10 10 0 0 1 10 10 v24 h-280 z"/>
     <text class="head" x="44" y="99">1 · PO tạo Issue</text>
     <rect x="46" y="128" width="248" height="34" rx="6" fill="#f6f8fa" stroke="#d0d7de"/>
-    <text class="text" x="56" y="150">Lập trình login sử dụng Firebase</text>
+    <text class="text" x="56" y="150">Xây dựng login bằng Google OAuth</text>
     <rect class="caret" x="262" y="137" width="2" height="17" fill="#1f2328"/>
     <text class="text muted" x="46" y="190">Chỉ một câu, bằng tiếng Việt.</text>
     <text class="text muted" x="46" y="212">Không cần IDE, không viết spec.</text>
@@ -64,7 +64,7 @@
     <text class="head" x="354" y="99">2 · AI đề xuất kế hoạch</text>
     <text class="mono" x="354" y="132">Epic  Xác thực người dùng</text>
     <text class="mono" x="354" y="151">├ Story  Đăng nhập email</text>
-    <text class="mono" x="354" y="170">│ ├ Task  Cấu hình Firebase</text>
+    <text class="mono" x="354" y="170">│ ├ Task  Cấu hình Google OAuth</text>
     <text class="mono" x="354" y="189">│ └ Task  Form đăng nhập</text>
     <text class="mono" x="354" y="208">└ Story  Đăng xuất</text>
     <text class="mono q" x="354" y="229">? Có cần đăng nhập Google?</text>
@@ -76,7 +76,7 @@
     <rect class="card" x="650" y="80" width="280" height="160" rx="10"/>
     <path class="po" d="M650 90 a10 10 0 0 1 10 -10 h260 a10 10 0 0 1 10 10 v24 h-280 z"/>
     <text class="head" x="664" y="99">3 · PO xác nhận</text>
-    <text class="mono" x="664" y="134">/ai-dlc create-plan …</text>
+    <text class="mono" x="664" y="134">/huddle60 create-plan …</text>
     <text class="text ok" x="664" y="166">✓ Đã tạo 5 Issues liên kết</text>
     <text class="text ok" x="664" y="189">✓ Đã thêm vào Project board</text>
     <text class="text muted" x="664" y="215">AI chỉ đề xuất. PO quyết định.</text>
@@ -102,7 +102,7 @@
     <rect class="card" x="340" y="270" width="280" height="170" rx="10"/>
     <path class="dev" d="M340 280 a10 10 0 0 1 10 -10 h260 a10 10 0 0 1 10 10 v24 h-280 z"/>
     <text class="head" x="354" y="289">5 · Pull Request tự kiểm tra</text>
-    <text class="text ok" x="354" y="326">✓ ai-dlc/baseline  ready</text>
+    <text class="text ok" x="354" y="326">✓ huddle60/baseline  ready</text>
     <text class="text ok" x="354" y="350">✓ CI  passed</text>
     <text class="text ok" x="354" y="374">✓ Review  approved</text>
     <text class="text muted" x="354" y="404">Yêu cầu bị sửa sau khi chốt?</text>
@@ -116,7 +116,7 @@
     <path class="po" d="M30 280 a10 10 0 0 1 10 -10 h260 a10 10 0 0 1 10 10 v24 h-280 z"/>
     <text class="head" x="44" y="289">6 · PO nghiệm thu</text>
     <text class="text ok" x="44" y="326">✓ Build trên main thành công</text>
-    <text class="mono" x="44" y="352">/ai-dlc accept …</text>
+    <text class="mono" x="44" y="352">/huddle60 accept …</text>
     <text class="text ok" x="44" y="380">✓ Story → Done</text>
     <text class="text muted" x="44" y="410">Mọi quyết định có hash và</text>
     <text class="text muted" x="44" y="430">người duyệt, truy vết được.</text>

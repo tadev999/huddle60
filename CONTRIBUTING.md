@@ -1,44 +1,47 @@
-# Đóng góp cho AI-DLC
+# Đóng góp cho huddle60
 
-Cảm ơn bạn quan tâm. Dự án đang ở giai đoạn alpha; đóng góp giá trị nhất lúc này là **chạy thử trên GitHub và Gemini
-thật** và báo lại những gì không khớp với thiết kế.
+Cảm ơn bạn đã quan tâm đóng góp cho huddle60. Dự án được xây dựng theo mô hình **Zero-Infra**: Local App (`huddle60 ui`) + CLI + GitHub Actions.
 
-## Bắt đầu
+## Phát triển và kiểm thử
+
+### Cài đặt môi trường
+Yêu cầu Node.js >= 20.
 
 ```bash
 npm ci
-npm run check
+npm run check      # Chạy typecheck + vitest + format:check
+npm run build      # Biên dịch mã sang dist/action.js và dist/cli.js
 ```
 
-`npm test` không gọi mạng: GitHub và Gemini được thay bằng `FakeGitHub`/`FakeModel` trong `tests/helpers`.
+### Chạy kiểm thử
+Bộ test chạy ngoại tuyến (không gọi mạng):
+- GitHub API và Gemini API được giả lập thông qua `FakeGitHub` và `FakeModel` trong `tests/helpers/`.
+- Chạy toàn bộ test: `npm test` hoặc `npm run test:watch`.
 
-Chạy local app với repo thật: `npm run build && node dist/cli.js ui --repo owner/name` (cần `gh auth login`;
-`GEMINI_API_KEY` nếu muốn soạn kế hoạch). Giao diện nằm trong `ui/` (HTML/CSS/JS thuần, không build step): chỉ dùng
-`textContent`/DOM API, không `innerHTML` với dữ liệu, không script/style inline (CSP chặn).
+### Chạy thử nghiệm cục bộ
+Chạy Local App với repository thật:
+```bash
+npm run build
+node dist/cli.js ui --repo owner/name
+```
+*Yêu cầu đã đăng nhập GitHub (`gh auth login`) và có `GEMINI_API_KEY` (dành cho PO để soạn kế hoạch).*
 
-## Việc cần giúp
+Giao diện người dùng nằm tại `ui/` (HTML/CSS/JS thuần, không build step):
+- Sử dụng DOM API (`textContent`, `createElement`), không dùng `innerHTML` với dữ liệu không đáng tin cậy.
+- Tuân thủ nghiêm ngặt Content Security Policy (CSP).
 
-| Mảng | Ví dụ |
-|---|---|
-| Kiểm thử thực tế | Cài App vào repo thử, chạy `huddle60 ui`: new plan → create issues → approve → ready → PR → accept, ghi lại kết quả |
-| Local app | Trải nghiệm PO/DEV, lưu bản nháp qua lần khởi động, hỗ trợ GHES, khả năng truy cập (a11y) |
-| Chất lượng planner | Bộ yêu cầu mẫu và đánh giá kế hoạch Gemini (độ hợp lý, câu hỏi chặn, AC) |
-| Tích hợp | Hỗ trợ merge queue, reconciler định kỳ, phát hiện Issue bị sửa chủ động |
-| Bảo mật | Prompt injection, vượt quyền, giả mạo webhook/marker, race khi tạo Issues |
-| Tài liệu | Hướng dẫn cài đặt từng bước có ảnh, bản tiếng Anh |
+## Nguyên tắc mã nguồn
 
-## Quy tắc
+1. **Xác định và minh bạch (Deterministic):**
+   - Logic kiểm tra quyền, mã băm (RFC 8785 canonical hash), tính hợp lệ của baseline và PR gate nằm hoàn toàn trong `src/core` và `src/workflow`.
+   - Không phụ thuộc vào AI để đưa ra phán quyết hay cấp quyền.
+2. **Quyền hạn rõ ràng:**
+   - Local App không tự ý ghi bằng chứng (evidence) vào Git: mọi thao tác duyệt đều đăng lệnh `/huddle60` bằng tài khoản người dùng, để GitHub Actions kiểm tra tính hợp lệ và ghi vào nhánh `huddle60-evidence`.
+3. **Tính tương thích hợp đồng (Contract Integrity):**
+   - Không thay đổi cấu trúc Issue template, tên nhãn (`huddle60:*`) hoặc định dạng lệnh `/huddle60` nếu không cập nhật đồng bộ tại [src/core/vocabulary.ts](file:///Users/taduongngoc/Projects/huddle60/src/core/vocabulary.ts), `templates/` và các bài test.
+4. **Bảo mật thông tin:**
+   - Không commit token, secret hoặc API key thật lên kho mã nguồn. Toàn bộ test fixture phải sử dụng dữ liệu giả định.
 
-- PR nhỏ, có test cho hành vi mới; giải thích phần chưa kiểm chứng.
-- Logic quyết định (quyền, hash, trạng thái) phải là code xác định trong `src/core` hoặc service, **không** giao cho model.
-- Local app không được tự ghi quyết định: nút chỉ đăng lệnh `/ai-dlc`, GitHub Actions kiểm tra và ghi evidence.
-- Không đổi heading Issue form, label hoặc định dạng lệnh mà không cập nhật `src/core/vocabulary.ts`, `templates/`
-  và `tests/templates.test.ts`; đây là contract với người dùng.
-- Thay đổi schema (`plan`, `baseline`, `decision`) cần tăng version và giữ khả năng đọc dữ liệu cũ.
-- Không commit secret, token, private key hay dữ liệu khách hàng; fixture phải là dữ liệu giả.
-- Dùng AI để viết code được, nhưng bạn phải hiểu và chịu trách nhiệm cho diff.
+## Báo lỗi và phản hồi
 
-## Báo lỗi
-
-Dùng form **Bug report**, kèm mã lỗi `E_...`, event GitHub và các bước tái hiện. Lỗ hổng bảo mật: xem
-[SECURITY.md](SECURITY.md).
+Sử dụng GitHub Issues kèm theo mã lỗi `E_...`, log thực thi và các bước tái hiện cụ thể. Đối với vấn đề bảo mật, vui lòng đọc [SECURITY.md](SECURITY.md).

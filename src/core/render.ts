@@ -11,15 +11,15 @@ export function sanitize(text: string): string {
     .replace(/<!--/gu, "&lt;!--")
     .replace(/</gu, "&lt;")
     .replace(/(^|[^\w`])@(?=[\w-])/gu, "$1@\u200b")
-    .replace(/^\/ai-dlc/gmu, "\\/ai-dlc");
+    .replace(/^\/(?:huddle60|ai-dlc)/gmu, "\\/huddle60");
 }
 
 export function marker(name: string, value: string): string {
-  return `<!-- ai-dlc:${name}:${value} -->`;
+  return `<!-- huddle60:${name}:${value} -->`;
 }
 
 export function findMarker(body: string | null | undefined, name: string): string | null {
-  const match = new RegExp(`<!-- ai-dlc:${name}:([^\\s>]+) -->`, "u").exec(body ?? "");
+  const match = new RegExp(`<!-- (?:huddle60|ai-dlc):${name}:([^\\s>]+) -->`, "u").exec(body ?? "");
   return match ? (match[1] as string) : null;
 }
 
@@ -132,7 +132,7 @@ export function renderPlanComment(record: PlanRecord): string {
           "**Cần PO trả lời các câu hỏi chặn trước khi tạo Issues.** Trả lời bằng một comment mới:",
           "",
           "```text",
-          `/ai-dlc refine plan=${record.planId}`,
+          `/huddle60 refine plan=${record.planId}`,
           "<câu trả lời của bạn, mỗi ý một dòng>",
           "```",
         ]
@@ -140,10 +140,10 @@ export function renderPlanComment(record: PlanRecord): string {
           "**Nếu đồng ý, PO xác nhận để App tạo các Issues:**",
           "",
           "```text",
-          `/ai-dlc create-plan plan=${record.planId} hash=${record.planHash}`,
+          `/huddle60 create-plan plan=${record.planId} hash=${record.planHash}`,
           "```",
           "",
-          `Muốn chỉnh sửa: \`/ai-dlc refine plan=${record.planId}\` kèm yêu cầu ở các dòng tiếp theo.`,
+          `Muốn chỉnh sửa: \`/huddle60 refine plan=${record.planId}\` kèm yêu cầu ở các dòng tiếp theo.`,
         ];
   return [
     `## Kế hoạch đề xuất (revision ${record.revision})`,
@@ -194,8 +194,8 @@ export function renderCreationSummary(
     "",
     ...(failures.length > 0 ? ["**Lỗi:**", "", bulletList(failures), ""] : []),
     complete
-      ? "Bước tiếp theo: PO ưu tiên trong Project; DEV review khả thi và chia việc; chốt baseline khi Story sẵn sàng (`/ai-dlc baseline`)."
-      : `Không xóa các Issue đã tạo. Thử lại an toàn bằng \`/ai-dlc resume-plan plan=${record.planId}\`.`,
+      ? "Bước tiếp theo: PO ưu tiên trong Project; DEV review khả thi và chia việc; chốt baseline khi Story sẵn sàng (`/huddle60 baseline`)."
+      : `Không xóa các Issue đã tạo. Thử lại an toàn bằng \`/huddle60 resume-plan plan=${record.planId}\`.`,
     marker("plan-result", record.planId),
   ].join("\n");
 }

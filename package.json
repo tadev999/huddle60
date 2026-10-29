@@ -23,12 +23,9 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "npm run typecheck && npm test && npm run format:check",
-    "huddle60": "node dist/cli.js",
-    "planner:start": "node dist/planner-server.js"
+    "huddle60": "node dist/cli.js"
   },
   "dependencies": {
-    "@google-cloud/firestore": "^9.4.0",
-    "@google-cloud/tasks": "^7.3.1",
     "@google/genai": "^2.32.0",
     "@octokit/auth-app": "^8.3.1",
     "@octokit/plugin-retry": "^8.1.1",
@@ -42,5 +39,8 @@
     "prettier": "^3.9.10",
     "typescript": "^5.9.3",
     "vitest": "^5.0.5"
+  },
+  "optionalDependencies": {
+    "@rolldown/binding-darwin-arm64": "^1.2.16"
   }
 }

@@ -9,7 +9,7 @@ describe("policy", () => {
     expect(hasRole(policy, DEV.id, "po")).toBe(false);
     expect(rolesOf(policy, DEV.id)).toEqual(["dev"]);
     expect(policy.lanes.fast.requires_po_approval).toBe(false);
-    expect(policy.evidence.branch).toBe("ai-dlc-evidence");
+    expect(policy.evidence.branch).toBe("huddle60-evidence");
   });
 
   it("rejects invalid YAML, missing PO and bot role holders", () => {
@@ -21,7 +21,7 @@ describe("policy", () => {
   });
 
   it("matches sensitive path globs", () => {
-    expect(matchesPath("src/auth/**", "src/auth/firebase/login.ts")).toBe(true);
+    expect(matchesPath("src/auth/**", "src/auth/oauth/login.ts")).toBe(true);
     expect(matchesPath("src/*.ts", "src/a/b.ts")).toBe(false);
     expect(matchesPath("migrations/**", "migrations/001.sql")).toBe(true);
     expect(isSensitive(parsePolicy(POLICY_YAML), "src/auth/session.ts")).toBe(true);

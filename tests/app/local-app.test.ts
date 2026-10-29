@@ -46,7 +46,9 @@ describe("LocalApp", () => {
         loginPlan({ openQuestions: [{ text: "Có Google login?", blocking: true }] }),
         loginPlan(),
       );
-      const draft = await app.draftPlan({ request: "Lập trình login sử dụng Firebase cho web" });
+      const draft = await app.draftPlan({
+        request: "Lập trình login sử dụng Google OAuth cho web",
+      });
       expect(draft.blocking).toEqual(["Có Google login?"]);
       await expect(app.createPlan(draft.draftId)).rejects.toMatchObject({ code: "E_PLAN_BLOCKED" });
 
@@ -69,7 +71,9 @@ describe("LocalApp", () => {
 
     it("resumes an interrupted creation without duplicates", async () => {
       model.respondWith(loginPlan());
-      const draft = await app.draftPlan({ request: "Lập trình login sử dụng Firebase cho web" });
+      const draft = await app.draftPlan({
+        request: "Lập trình login sử dụng Google OAuth cho web",
+      });
       github.failAfterCreateOn.add(3);
       await expect(app.createPlan(draft.draftId)).rejects.toThrow();
       const created = await app.createPlan(draft.draftId);
@@ -88,7 +92,7 @@ describe("LocalApp", () => {
       });
       model.respondWith(loginPlan());
       const devDraft = await devApp.draftPlan({
-        request: "Lập trình login sử dụng Firebase cho web",
+        request: "Lập trình login sử dụng Google OAuth cho web",
       });
       await expect(devApp.createPlan(devDraft.draftId)).rejects.toMatchObject({ code: "E_ROLE" });
 
@@ -119,7 +123,7 @@ describe("LocalApp", () => {
 
       const approve = await decide(story.number, { action: "approve" });
       expect(approve.command).toMatch(
-        /^\/ai-dlc approve baseline=bl-\d+-[0-9a-f]{12} hash=sha256:/u,
+        /^\/(?:huddle60|ai-dlc) approve baseline=bl-\d+-[0-9a-f]{12} hash=sha256:/u,
       );
       expect(approve.reply).toMatchObject({ status: "done", ok: true });
       expect((await app.listItems())[0]).toMatchObject({

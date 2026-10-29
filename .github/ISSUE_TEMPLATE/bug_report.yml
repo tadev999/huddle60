@@ -1,5 +1,5 @@
 name: Bug report
-description: Báo lỗi của AI-DLC (không đăng secret, token hoặc dữ liệu khách hàng).
+description: Báo lỗi của Huddle60 (không đăng secret, token hoặc dữ liệu khách hàng).
 labels: ["bug"]
 body:
   - type: textarea
@@ -18,10 +18,10 @@ body:
     id: steps
     attributes:
       label: Các bước tái hiện
-      description: Event GitHub, lệnh /ai-dlc, mã lỗi E_... nếu có.
+      description: Event GitHub, lệnh /huddle60, mã lỗi E_... nếu có.
     validations:
       required: true
   - type: input
     id: version
     attributes:
-      label: Phiên bản / commit AI-DLC
+      label: Phiên bản / commit Huddle60

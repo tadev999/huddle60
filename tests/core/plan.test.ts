@@ -77,7 +77,7 @@ describe("plan validation", () => {
   it("orders creation so parents and blockers come first", () => {
     const order = creationOrder(loginPlan().nodes).map((node) => node.localId);
     expect(order.indexOf("epic-auth")).toBe(0);
-    expect(order.indexOf("task-firebase-setup")).toBeLessThan(order.indexOf("task-login-ui"));
+    expect(order.indexOf("task-oauth-setup")).toBeLessThan(order.indexOf("task-login-ui"));
     expect(order.indexOf("story-login")).toBeLessThan(order.indexOf("story-logout"));
   });
 

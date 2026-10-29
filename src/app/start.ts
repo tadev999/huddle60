@@ -7,7 +7,7 @@ import { GitBranchEvidenceStore } from "../adapters/git-evidence.js";
 import { connectRepository, octokitFromToken } from "../adapters/github.js";
 import { createJsonLogger } from "../adapters/memory.js";
 import { AiDlcError } from "../core/errors.js";
-import { POLICY_PATH, parsePolicy } from "../core/policy.js";
+import { POLICY_PATH, LEGACY_POLICY_PATH, parsePolicy } from "../core/policy.js";
 import { systemClock } from "../ports.js";
 import { LocalApp } from "./local-app.js";
 import { createAppHandler } from "./server.js";
@@ -65,7 +65,10 @@ export async function startLocalApp(options: StartOptions): Promise<void> {
   const logger = createJsonLogger({ component: "huddle60-ui" });
   const octokit = octokitFromToken(resolveGitHubToken());
   const github = await connectRepository(octokit, options.owner, options.repo);
-  const policySource = await github.readFile(POLICY_PATH, await github.getDefaultBranch());
+  let policySource = await github.readFile(POLICY_PATH, await github.getDefaultBranch());
+  if (!policySource) {
+    policySource = await github.readFile(LEGACY_POLICY_PATH, await github.getDefaultBranch());
+  }
   if (!policySource)
     throw new AiDlcError(
       "E_POLICY_INVALID",

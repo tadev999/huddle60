@@ -43,7 +43,7 @@ export async function renderAgentContext(
       .filter(([, value]) => value.length > 0)
       .map(([heading, value]) => `### ${heading}\n\n${value}`);
     return [
-      `# AI-DLC context for #${issueNumber}`,
+      `# huddle60 context for #${issueNumber}`,
       "",
       `Baseline \`${snapshot.baselineId}\` · lane \`${receipt.lane}\` · ${snapshot.kind}`,
       ...(stale
@@ -53,7 +53,7 @@ export async function renderAgentContext(
           ]
         : []),
       "",
-      "Implement only what this baseline describes. Do not run /ai-dlc approve, ready or accept.",
+      "Implement only what this baseline describes. Do not run /huddle60 approve, ready or accept.",
       "",
       `## ${snapshot.requirements.title}`,
       "",
@@ -73,6 +73,6 @@ export async function renderAgentContext(
   }
   throw new AiDlcError(
     "E_NOT_READY",
-    `#${issueNumber} has no valid ready decision. Ask a DEV to run /ai-dlc ready, or use --draft.`,
+    `#${issueNumber} has no valid ready decision. Ask a DEV to run /huddle60 ready, or use --draft.`,
   );
 }

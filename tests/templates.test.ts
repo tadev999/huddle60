@@ -45,7 +45,7 @@ describe("adopter templates", () => {
   });
 
   it("example policy is valid", async () => {
-    const policy = parsePolicy(await readFile("templates/.github/ai-dlc/policy.yml", "utf8"));
+    const policy = parsePolicy(await readFile("templates/.github/huddle60/policy.yml", "utf8"));
     expect(policy.roles.po).toHaveLength(1);
   });
 });

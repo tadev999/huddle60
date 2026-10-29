@@ -1,7 +1,6 @@
-# Deterministic AI-DLC gates. Planning (Gemini) runs in `huddle60 ui` on the PO's machine
+# Deterministic huddle60 gates (AI-DLC protocol). Planning (Gemini) runs in `huddle60 ui` on the PO's machine
 # (or the optional planner service), never here.
-# Pin `your-org/huddle60` to a full commit SHA in production.
-name: ai-dlc
+name: huddle60
 on:
   issue_comment:
     types: [created, edited, deleted]
@@ -9,9 +8,9 @@ on:
     types: [opened, edited, synchronize, reopened, ready_for_review]
 permissions: {}
 jobs:
-  ai-dlc:
+  huddle60:
     # Never check out or run pull request code in this job: it holds a write token.
-    if: github.event_name == 'pull_request_target' || (github.event.issue.pull_request == null && github.event.sender.type != 'Bot' && (startsWith(github.event.comment.body, '/ai-dlc') || github.event.action != 'created'))
+    if: github.event_name == 'pull_request_target' || (github.event.issue.pull_request == null && github.event.sender.type != 'Bot' && (startsWith(github.event.comment.body, '/huddle60') || startsWith(github.event.comment.body, '/ai-dlc') || github.event.action != 'created'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -21,7 +20,7 @@ jobs:
         with:
           app-id: ${{ vars.AI_DLC_APP_ID }}
           private-key: ${{ secrets.AI_DLC_APP_PRIVATE_KEY }}
-      - uses: your-org/huddle60@v0
+      - uses: tadev999/huddle60@main
         with:
           token: ${{ steps.app-token.outputs.token }}
           enabled: ${{ vars.AI_DLC_ENABLED || 'true' }}

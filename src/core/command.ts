@@ -1,6 +1,7 @@
 import { AiDlcError } from "./errors.js";
 
-export const COMMAND_PREFIX = "/ai-dlc";
+export const COMMAND_PREFIX = "/huddle60";
+export const LEGACY_COMMAND_PREFIX = "/ai-dlc";
 
 interface CommandSpec {
   required: readonly string[];
@@ -30,9 +31,12 @@ export interface ParsedCommand {
 
 /** Quick check used to route events without fully parsing them. */
 export function looksLikeCommand(body: string | null | undefined): boolean {
+  const line = firstLine(body ?? "");
   return (
-    firstLine(body ?? "").startsWith(`${COMMAND_PREFIX} `) ||
-    firstLine(body ?? "") === COMMAND_PREFIX
+    line.startsWith(`${COMMAND_PREFIX} `) ||
+    line === COMMAND_PREFIX ||
+    line.startsWith(`${LEGACY_COMMAND_PREFIX} `) ||
+    line === LEGACY_COMMAND_PREFIX
   );
 }
 
@@ -66,13 +70,18 @@ export function parseCommand(body: string): ParsedCommand {
   const normalized = body.replace(/\r\n?/gu, "\n");
   const [head = "", ...rest] = normalized.split("\n");
   const line = head.trim();
-  if (!line.startsWith(COMMAND_PREFIX)) {
+  let prefix = "";
+  if (line.startsWith(COMMAND_PREFIX)) {
+    prefix = COMMAND_PREFIX;
+  } else if (line.startsWith(LEGACY_COMMAND_PREFIX)) {
+    prefix = LEGACY_COMMAND_PREFIX;
+  } else {
     throw new AiDlcError(
       "E_SYNTAX",
       `Commands must start with \`${COMMAND_PREFIX}\` on the first line.`,
     );
   }
-  const remainder = line.slice(COMMAND_PREFIX.length).trim();
+  const remainder = line.slice(prefix.length).trim();
   const [rawName = "", ...argParts] = remainder.split(/\s+/u);
   if (!(rawName in COMMAND_SPECS)) {
     throw new AiDlcError(

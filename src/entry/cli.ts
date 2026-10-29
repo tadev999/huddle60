@@ -1,5 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { GeminiModel } from "../adapters/gemini.js";
 import { GitBranchEvidenceStore } from "../adapters/git-evidence.js";
@@ -18,7 +21,7 @@ import {
   parseModelPlan,
   type PlanRecord,
 } from "../core/plan.js";
-import { POLICY_PATH, parsePolicy } from "../core/policy.js";
+import { POLICY_PATH, LEGACY_POLICY_PATH, parsePolicy } from "../core/policy.js";
 import { renderPlanComment } from "../core/render.js";
 import {
   PLANNER_SYSTEM_INSTRUCTION,
@@ -79,7 +82,10 @@ async function context(
   const [owner, repo] = detectRepo(repoArg);
   const octokit = octokitFromToken(token());
   const github = await connectRepository(octokit, owner, repo);
-  const policySource = await github.readFile(POLICY_PATH, await github.getDefaultBranch());
+  let policySource = await github.readFile(POLICY_PATH, await github.getDefaultBranch());
+  if (!policySource) {
+    policySource = await github.readFile(LEGACY_POLICY_PATH, await github.getDefaultBranch());
+  }
   if (!policySource) throw new Error(`Missing ${POLICY_PATH} in ${owner}/${repo}.`);
   const policy = parsePolicy(policySource);
   const evidence = new GitBranchEvidenceStore(octokit, owner, repo, policy.evidence.branch);
@@ -93,34 +99,141 @@ async function context(
   return renderAgentContext({ github, evidence, workflow }, policy, issueNumber, draft);
 }
 
+function resolveTemplatesDir(): string {
+  const distRelative = fileURLToPath(new URL("../templates", import.meta.url));
+  if (existsSync(distRelative)) return distRelative;
+  const srcRelative = fileURLToPath(new URL("../../templates", import.meta.url));
+  if (existsSync(srcRelative)) return srcRelative;
+  throw new Error("Cannot find templates directory.");
+}
+
+async function scaffoldTemplates(
+  destDir: string,
+  viewer: { id: number; login: string },
+): Promise<{ created: string[]; skipped: string[] }> {
+  const templatesDir = resolveTemplatesDir();
+  const created: string[] = [];
+  const skipped: string[] = [];
+
+  async function walk(currentSrc: string, currentDest: string) {
+    const entries = await readdir(currentSrc, { withFileTypes: true });
+    for (const entry of entries) {
+      const srcPath = join(currentSrc, entry.name);
+      const destPath = join(currentDest, entry.name);
+
+      if (entry.isDirectory()) {
+        await walk(srcPath, destPath);
+      } else if (entry.isFile()) {
+        const rel = relative(destDir, destPath);
+        if (existsSync(destPath)) {
+          skipped.push(rel);
+          continue;
+        }
+        await mkdir(dirname(destPath), { recursive: true });
+        let content = await readFile(srcPath, "utf8");
+
+        if (entry.name === "policy.yml") {
+          content = content
+            .replace(
+              /roles:[\s\S]*?maintainer:\s*\[\]/u,
+              `roles:\n  po:\n    - id: ${viewer.id}\n      login: ${viewer.login}\n  dev:\n    - id: ${viewer.id}\n      login: ${viewer.login}\n  maintainer:\n    - id: ${viewer.id}\n      login: ${viewer.login}`,
+            )
+            .replace(
+              /project:\s*\n\s*owner:\s*your-org\s*\n\s*number:\s*1/u,
+              `# project:\n#   owner: your-org\n#   number: 1`,
+            );
+        } else if (entry.name === "huddle60.yml" || entry.name === "ai-dlc.yml") {
+          content = content.replace("your-org/huddle60@v0", "tadev999/huddle60@main");
+        }
+
+        await writeFile(destPath, content, "utf8");
+        created.push(rel);
+      }
+    }
+  }
+
+  const githubSrc = join(templatesDir, ".github");
+  if (existsSync(githubSrc)) {
+    await walk(githubSrc, join(destDir, ".github"));
+  }
+
+  const agentsSrc = join(templatesDir, "AGENTS.md");
+  const agentsDest = join(destDir, "AGENTS.md");
+  if (existsSync(agentsSrc)) {
+    if (existsSync(agentsDest)) {
+      skipped.push("AGENTS.md");
+    } else {
+      const content = await readFile(agentsSrc, "utf8");
+      await writeFile(agentsDest, content, "utf8");
+      created.push("AGENTS.md");
+    }
+  }
+
+  return { created, skipped };
+}
+
 async function initEvidence(repoArg: string | undefined): Promise<string> {
   const [owner, repo] = detectRepo(repoArg);
   const octokit = octokitFromToken(token());
   const github = await connectRepository(octokit, owner, repo);
-  const policySource = await github.readFile(POLICY_PATH, await github.getDefaultBranch());
-  const branch = policySource ? parsePolicy(policySource).evidence.branch : "ai-dlc-evidence";
+  let policySource = await github.readFile(POLICY_PATH, await github.getDefaultBranch());
+  if (!policySource) {
+    policySource = await github.readFile(LEGACY_POLICY_PATH, await github.getDefaultBranch());
+  }
+  const branch = policySource ? parsePolicy(policySource).evidence.branch : "huddle60-evidence";
   const result = await new GitBranchEvidenceStore(octokit, owner, repo, branch).initialize();
   return result === "created"
-    ? `Created branch ${branch}. Protect it with a ruleset that blocks force-push and deletion.`
-    : `Branch ${branch} already exists.`;
+    ? `✓ Created branch ${branch}. Protect it with a ruleset that blocks force-push and deletion.`
+    : `✓ Branch ${branch} already exists.`;
 }
 
 async function init(repoArg: string | undefined): Promise<string> {
   const [owner, repo] = detectRepo(repoArg);
   const github = await connectRepository(octokitFromToken(token()), owner, repo);
-  const created: string[] = [];
+  const viewer = await github.viewer();
+
+  const createdLabels: string[] = [];
   for (const [name, meta] of Object.entries(LABEL_COLORS)) {
-    if ((await github.ensureLabel({ name, ...meta })) === "created") created.push(name);
+    if ((await github.ensureLabel({ name, ...meta })) === "created") createdLabels.push(name);
   }
+
   const lines = [
-    created.length > 0 ? `Created labels: ${created.join(", ")}` : "Labels already exist.",
+    `✓ Authenticated as ${viewer.login} (id: ${viewer.id}).`,
+    createdLabels.length > 0
+      ? `✓ Created labels: ${createdLabels.join(", ")}`
+      : "✓ Labels already exist.",
     await initEvidence(repoArg),
   ];
-  const policy = await github.readFile(POLICY_PATH, await github.getDefaultBranch());
-  if (!policy)
+
+  try {
+    const { created, skipped } = await scaffoldTemplates(process.cwd(), viewer);
+    if (created.length > 0) {
+      lines.push(
+        `✓ Scaffolding completed (${created.length} files created):`,
+        ...created.map((f) => `    + ${f}`),
+      );
+    }
+    if (skipped.length > 0) {
+      lines.push(`ℹ Kept existing files (${skipped.length}): ${skipped.join(", ")}`);
+    }
+
     lines.push(
-      `Next: commit templates/.github/** (policy with your user ids from \`gh api user --jq .id\`) to the default branch.`,
+      "",
+      `Setup complete! Next steps:`,
+      `  1. Commit and push templates to default branch:`,
+      `     git add .github AGENTS.md && git commit -m "chore: setup huddle60" && git push`,
+      `  2. Start the local app:`,
+      `     npx huddle60 ui`,
     );
+  } catch {
+    const policy = await github.readFile(POLICY_PATH, await github.getDefaultBranch());
+    if (!policy) {
+      lines.push(
+        `Next: commit templates/.github/** (policy with user id ${viewer.id}) to the default branch.`,
+      );
+    }
+  }
+
   return lines.join("\n");
 }
 
@@ -139,7 +252,7 @@ async function validatePolicy(file: string | undefined): Promise<string> {
 
 async function planPreview(request: string | undefined): Promise<string> {
   if (!request)
-    throw new Error('Pass the request text, e.g. ai-dlc plan-preview "Login with Firebase".');
+    throw new Error('Pass the request text, e.g. huddle60 plan-preview "Login with Google".');
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("Set GEMINI_API_KEY to call Gemini.");
   const model = new GeminiModel({

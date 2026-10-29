@@ -439,7 +439,7 @@ async function pollReply(issueNumber, commentId, action, update) {
   state.pending.delete(issueNumber);
   renderItems();
   update("fail", `#${issueNumber} ${action}: chưa thấy phản hồi từ GitHub Actions`, {
-    text: "Kiểm tra workflow ai-dlc trong GitHub Actions, sau đó tải lại.",
+    text: "Kiểm tra workflow huddle60 trong GitHub Actions, sau đó tải lại.",
   });
 }
 

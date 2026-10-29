@@ -82,7 +82,7 @@ export class GitBranchEvidenceStore implements EvidenceStore {
       });
       const commit = await this.octokit.rest.git.createCommit({
         ...this.base,
-        message: `ai-dlc: add ${path}`,
+        message: `huddle60: add ${path}`,
         tree: tree.data.sha,
         parents: [head.sha],
       });
@@ -147,7 +147,7 @@ export class GitBranchEvidenceStore implements EvidenceStore {
     });
     const commit = await this.octokit.rest.git.createCommit({
       ...this.base,
-      message: "ai-dlc: initialize evidence branch",
+      message: "huddle60: initialize evidence branch",
       tree: tree.data.sha,
       parents: [],
     });

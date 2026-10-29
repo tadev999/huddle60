@@ -17,10 +17,15 @@ describe("PR block", () => {
 
   it("returns null without a block and rejects malformed blocks", () => {
     expect(parsePrBlock("no block")).toBeNull();
-    expect(() => parsePrBlock("<!-- ai-dlc:begin -->\nAI-DLC-Issue: #1")).toThrow(/not closed/u);
+    expect(() => parsePrBlock("<!-- huddle60:begin -->\nHUDDLE60-Issue: #1")).toThrow(
+      /not closed/u,
+    );
+    expect(() =>
+      parsePrBlock("<!-- huddle60:begin -->\nHUDDLE60-Issue: org/repo#1\n<!-- huddle60:end -->"),
+    ).toThrow(/Issue/u);
     expect(() =>
       parsePrBlock("<!-- ai-dlc:begin -->\nAI-DLC-Issue: org/repo#1\n<!-- ai-dlc:end -->"),
-    ).toThrow(/AI-DLC-Issue/u);
+    ).toThrow(/Issue/u);
     const twice =
       `${renderPrBlock({ issueNumber: 1, baselineId: "bl-1-0123456789ab", hash: HASH, acceptanceCriteria: [] })}\n`.repeat(
         2,
@@ -38,12 +43,12 @@ describe("PR block", () => {
 describe("sanitize", () => {
   it("neutralizes mentions, HTML, forged markers and commands", () => {
     const text = sanitize(
-      "Hi @team <script>x</script> <!-- ai-dlc:plan:fake -->\n/ai-dlc create-plan",
+      "Hi @team <script>x</script> <!-- huddle60:plan:fake -->\n/huddle60 create-plan\n/ai-dlc create-plan",
     );
     expect(text).not.toMatch(/@team/u);
     expect(text).not.toContain("<script>");
     expect(findMarker(text, "plan")).toBeNull();
-    expect(text).not.toMatch(/^\/ai-dlc/mu);
+    expect(text).not.toMatch(/^\/(?:huddle60|ai-dlc)/mu);
     expect(sanitize("email a@b.com")).toBe("email a@b.com");
   });
 

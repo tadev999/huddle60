@@ -1,18 +1,18 @@
 import type { ModelPlan } from "../../src/core/plan.js";
 
-/** A realistic plan for "Lập trình login sử dụng Firebase". */
+/** A realistic plan for "Lập trình login sử dụng Google OAuth". */
 export function loginPlan(overrides: Partial<ModelPlan> = {}): ModelPlan {
   return {
     rootKind: "epic",
-    summary: "Đăng nhập bằng Firebase Authentication cho ứng dụng web.",
+    summary: "Đăng nhập bằng Google OAuth cho ứng dụng web.",
     assumptions: ["Ứng dụng là web app hiện có"],
-    openQuestions: [{ text: "Có cần đăng nhập bằng Google không?", blocking: false }],
+    openQuestions: [{ text: "Có cần lưu session vào cookie không?", blocking: false }],
     nodes: [
       {
         localId: "epic-auth",
         kind: "epic",
         parentLocalId: null,
-        title: "Xác thực người dùng bằng Firebase",
+        title: "Xác thực người dùng bằng Google OAuth",
         goal: "Người dùng truy cập ứng dụng bằng danh tính đã xác thực",
         scope: ["Đăng nhập", "Đăng xuất"],
         outOfScope: ["Phân quyền chi tiết"],
@@ -25,24 +25,27 @@ export function loginPlan(overrides: Partial<ModelPlan> = {}): ModelPlan {
         localId: "story-login",
         kind: "story",
         parentLocalId: "epic-auth",
-        title: "Đăng nhập bằng email và mật khẩu",
-        goal: "Người dùng đăng nhập bằng tài khoản email",
+        title: "Đăng nhập bằng tài khoản Google",
+        goal: "Người dùng đăng nhập bằng tài khoản Google",
         scope: ["Form đăng nhập"],
         outOfScope: [],
         criteria: [
           { id: "AC-01", text: "Given tài khoản hợp lệ When đăng nhập Then vào trang chính" },
-          { id: "AC-02", text: "Given sai mật khẩu When đăng nhập Then thấy thông báo lỗi chung" },
+          {
+            id: "AC-02",
+            text: "Given người dùng hủy When đăng nhập Then thấy thông báo lỗi chung",
+          },
         ],
         acRefs: [],
         blockedBy: [],
         riskNotes: [],
       },
       {
-        localId: "task-firebase-setup",
+        localId: "task-oauth-setup",
         kind: "task",
         parentLocalId: "story-login",
-        title: "Cấu hình Firebase Authentication",
-        goal: "Khởi tạo Firebase SDK và biến môi trường",
+        title: "Cấu hình Google OAuth Client",
+        goal: "Khởi tạo OAuth SDK và biến môi trường",
         scope: ["Cấu hình SDK"],
         outOfScope: [],
         criteria: [],
@@ -55,12 +58,12 @@ export function loginPlan(overrides: Partial<ModelPlan> = {}): ModelPlan {
         kind: "task",
         parentLocalId: "story-login",
         title: "Giao diện đăng nhập",
-        goal: "Form đăng nhập gọi Firebase",
+        goal: "Form đăng nhập gọi OAuth",
         scope: ["UI", "Test"],
         outOfScope: [],
         criteria: [],
         acRefs: ["AC-01", "AC-02"],
-        blockedBy: ["task-firebase-setup"],
+        blockedBy: ["task-oauth-setup"],
         riskNotes: [],
       },
       {
@@ -121,7 +124,7 @@ export function taskBody(options: { parent?: string; acRefs?: string } = {}): st
   return [
     "### Mục tiêu và người dùng",
     "",
-    "Form đăng nhập gọi Firebase",
+    "Form đăng nhập gọi OAuth",
     "",
     "### Phạm vi",
     "",

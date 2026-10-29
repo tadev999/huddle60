@@ -93,19 +93,19 @@ const LANES: readonly LaneName[] = ["fast", "standard", "strict"];
 const MAX_DRAFTS = 50;
 
 export const LABEL_COLORS: Record<string, { color: string; description: string }> = {
-  [LABELS.request]: { color: "5319e7", description: "AI-DLC: product request from a PO" },
-  [LABELS.planDraft]: { color: "c5def5", description: "AI-DLC: plan proposed, not created" },
-  [LABELS.planCreated]: { color: "0e8a16", description: "AI-DLC: Issues created from the plan" },
-  [LABELS.planPartial]: { color: "d93f0b", description: "AI-DLC: Issue creation incomplete" },
-  [LABELS.fromPlan]: { color: "bfdadc", description: "AI-DLC: created from a confirmed plan" },
-  [LABELS.stale]: { color: "fbca04", description: "AI-DLC: content changed after decisions" },
-  [LABELS.exempt]: { color: "ededed", description: "AI-DLC: PR exempt (maintainer only)" },
+  [LABELS.request]: { color: "5319e7", description: "huddle60: product request from a PO" },
+  [LABELS.planDraft]: { color: "c5def5", description: "huddle60: plan proposed, not created" },
+  [LABELS.planCreated]: { color: "0e8a16", description: "huddle60: Issues created from the plan" },
+  [LABELS.planPartial]: { color: "d93f0b", description: "huddle60: Issue creation incomplete" },
+  [LABELS.fromPlan]: { color: "bfdadc", description: "huddle60: created from a confirmed plan" },
+  [LABELS.stale]: { color: "fbca04", description: "huddle60: content changed after decisions" },
+  [LABELS.exempt]: { color: "ededed", description: "huddle60: PR exempt (maintainer only)" },
   [LABELS.epic]: { color: "3e4b9e", description: "Epic" },
   [LABELS.story]: { color: "1d76db", description: "User story" },
   [LABELS.task]: { color: "0052cc", description: "Technical task" },
 };
 
-/** Backend of `huddle60 ui`. Decisions are posted as `/ai-dlc` comments so GitHub Actions validates them. */
+/** Backend of `huddle60 ui`. Decisions are posted as `/huddle60` comments so GitHub Actions validates them. */
 export class LocalApp {
   readonly workflow: WorkflowService;
   private readonly plans = new MemoryPlanStore();
@@ -427,13 +427,13 @@ export class LocalApp {
     let command: string;
     switch (input.action) {
       case "approve":
-        command = `/ai-dlc approve ${target} hash=${snapshot.contentHash}`;
+        command = `/huddle60 approve ${target} hash=${snapshot.contentHash}`;
         break;
       case "ready": {
         const lane = input.lane as LaneName;
         if (!LANES.includes(lane))
           throw new AiDlcError("E_SYNTAX", `Lane must be one of ${LANES.join(", ")}.`);
-        command = `/ai-dlc ready ${target} hash=${snapshot.contentHash} lane=${lane}`;
+        command = `/huddle60 ready ${target} hash=${snapshot.contentHash} lane=${lane}`;
         break;
       }
       case "accept": {
@@ -446,7 +446,7 @@ export class LocalApp {
             "No successful acceptance build on the default branch. Merge the PR and wait for the build.",
           );
         }
-        command = `/ai-dlc accept ${target} run=${build.id} commit=${build.headSha}`;
+        command = `/huddle60 accept ${target} run=${build.id} commit=${build.headSha}`;
         break;
       }
       default:
@@ -466,7 +466,11 @@ export class LocalApp {
     );
     if (!found) return { status: "pending", body: null, ok: false };
     const body = found.body.replace(/<!--[\s\S]*?-->/gu, "").trim();
-    return { status: "done", body, ok: !body.startsWith("**AI-DLC: `E_") };
+    return {
+      status: "done",
+      body,
+      ok: !body.startsWith("**huddle60: `E_") && !body.startsWith("**AI-DLC: `E_"),
+    };
   }
 
   async builds(): Promise<BuildView[]> {

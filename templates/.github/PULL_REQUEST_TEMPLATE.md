@@ -1,6 +1,6 @@
 Refs #
 
-<!-- Dán khối từ reply của `/ai-dlc ready` hoặc `npx huddle60 context --issue <n>`. -->
+<!-- Dán khối từ reply của `/huddle60 ready` hoặc `npx huddle60 context --issue <n>`. -->
 <!-- Dùng "Refs #n", không dùng Closes/Fixes/Resolves cho Story/Epic. -->
 
 ## Đã thay đổi / AC liên quan

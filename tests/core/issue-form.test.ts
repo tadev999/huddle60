@@ -4,9 +4,9 @@ import { parseCriteria, parseIssueForm, parseIssueRefs } from "../../src/core/is
 describe("Issue form parsing", () => {
   it("reads sections and treats GitHub's _No response_ as empty", () => {
     const sections = parseIssueForm(
-      "### Yêu cầu\n\nLập trình login\nsử dụng Firebase\n\n### Ghi chú\n\n_No response_\n",
+      "### Yêu cầu\n\nLập trình login\nsử dụng Google OAuth\n\n### Ghi chú\n\n_No response_\n",
     );
-    expect(sections.get("Yêu cầu")).toBe("Lập trình login\nsử dụng Firebase");
+    expect(sections.get("Yêu cầu")).toBe("Lập trình login\nsử dụng Google OAuth");
     expect(sections.get("Ghi chú")).toBe("");
   });
 

@@ -1,11 +1,17 @@
+import { timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import { z } from "zod";
 import { isAiDlcError } from "../core/errors.js";
 import type { Logger } from "../ports.js";
-import { safeEqual } from "../server/http.js";
 import type { LocalApp } from "./local-app.js";
+
+export function safeEqual(a: string, b: string): boolean {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  return left.length === right.length && timingSafeEqual(left, right);
+}
 
 export const TOKEN_HEADER = "x-ai-dlc-token";
 const MAX_BODY = 256 * 1024;

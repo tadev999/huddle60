@@ -109,7 +109,7 @@ describe("local app server", () => {
       body: JSON.stringify({ action: "approve" }),
     });
     expect(posted.status).toBe(200);
-    expect(JSON.parse(posted.body).command).toMatch(/^\/ai-dlc approve /u);
+    expect(JSON.parse(posted.body).command).toMatch(/^\/(?:huddle60|ai-dlc) approve /u);
     const domain = await call("/api/issues/1/decisions", {
       method: "POST",
       headers: json,

@@ -1,5 +1,5 @@
 name: huddle60 · AI-DLC gates
-description: Baseline, decision receipts and the ai-dlc/baseline pull request gate (AI-DLC protocol) for huddle60.
+description: Baseline, decision receipts and the huddle60/baseline pull request gate (AI-DLC protocol) for huddle60.
 author: huddle60 contributors
 branding:
   icon: check-circle
@@ -9,7 +9,7 @@ inputs:
     description: GitHub App installation token with issues, contents, statuses and actions permissions.
     required: true
   enabled:
-    description: Set to "false" to pause AI-DLC (pull requests get a pending status).
+    description: Set to "false" to pause huddle60 gates (pull requests get a pending status).
     required: false
     default: "true"
 runs:
@@ -18,15 +18,17 @@ runs:
     - uses: actions/setup-node@v4
       with:
         node-version: 22
-    - name: Install and build AI-DLC
+    - name: Install and build huddle60
       shell: bash
       working-directory: ${{ github.action_path }}
       run: |
         npm ci --no-audit --no-fund --ignore-scripts
         npm run build
-    - name: Run AI-DLC
+    - name: Run huddle60 gate
       shell: bash
       run: node "${{ github.action_path }}/dist/action.js"
       env:
+        HUDDLE60_TOKEN: ${{ inputs.token }}
+        HUDDLE60_ENABLED: ${{ inputs.enabled }}
         AI_DLC_TOKEN: ${{ inputs.token }}
         AI_DLC_ENABLED: ${{ inputs.enabled }}

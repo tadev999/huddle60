@@ -1,4 +1,4 @@
-# AI-DLC policy. Changes must be reviewed by CODEOWNERS.
+# huddle60 policy (AI-DLC protocol). Changes must be reviewed by CODEOWNERS.
 # Roles use numeric GitHub user ids (https://api.github.com/users/<login>), which never change.
 # Accounts used only as AI tools must not hold a role.
 version: 1
@@ -29,7 +29,7 @@ sensitive_paths:
   - "migrations/**"
   - "src/auth/**"
 evidence:
-  branch: ai-dlc-evidence
+  branch: huddle60-evidence
 acceptance:
   build_workflows:
     - .github/workflows/build.yml

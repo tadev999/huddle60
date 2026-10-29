@@ -38,8 +38,8 @@ export const PolicySchema = z
       }),
     sensitive_paths: z.array(z.string().min(1)).default([]),
     evidence: z
-      .object({ branch: z.string().min(1).default("ai-dlc-evidence") })
-      .default({ branch: "ai-dlc-evidence" }),
+      .object({ branch: z.string().min(1).default("huddle60-evidence") })
+      .default({ branch: "huddle60-evidence" }),
     acceptance: z
       .object({ build_workflows: z.array(z.string().min(1)).min(1) })
       .default({ build_workflows: [".github/workflows/build.yml"] }),
@@ -63,7 +63,8 @@ export type Policy = z.infer<typeof PolicySchema>;
 export type Role = "po" | "dev" | "maintainer";
 export type LaneName = keyof Policy["lanes"];
 
-export const POLICY_PATH = ".github/ai-dlc/policy.yml";
+export const POLICY_PATH = ".github/huddle60/policy.yml";
+export const LEGACY_POLICY_PATH = ".github/ai-dlc/policy.yml";
 
 export function parsePolicy(source: string): Policy {
   let raw: unknown;

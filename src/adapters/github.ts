@@ -18,8 +18,17 @@ export type GitHubClient = InstanceType<typeof RetryingOctokit>;
 
 const USER_AGENT = "huddle60/0.1.0";
 
+const defaultLog = process.env.AI_DLC_DEBUG
+  ? undefined
+  : {
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+    };
+
 export function octokitFromToken(token: string): GitHubClient {
-  return new RetryingOctokit({ auth: token, userAgent: USER_AGENT });
+  return new RetryingOctokit({ auth: token, userAgent: USER_AGENT, log: defaultLog });
 }
 
 export function octokitForInstallation(
@@ -31,6 +40,7 @@ export function octokitForInstallation(
     authStrategy: createAppAuth,
     auth: { appId, privateKey, installationId },
     userAgent: USER_AGENT,
+    log: defaultLog,
   });
 }
 
