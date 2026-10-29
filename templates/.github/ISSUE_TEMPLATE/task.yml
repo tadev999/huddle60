@@ -1,0 +1,43 @@
+name: Task
+description: Bước kỹ thuật thuộc một Story.
+title: "[Task] "
+labels: ["type:task"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Mục tiêu và người dùng
+      description: Đầu ra kỹ thuật của task.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Phạm vi
+      description: File/module được phép thay đổi.
+    validations:
+      required: true
+  - type: input
+    id: parent
+    attributes:
+      label: Issue cha
+      description: "Story chứa task, ví dụ #11"
+    validations:
+      required: true
+  - type: input
+    id: blocked_by
+    attributes:
+      label: Blocked by
+  - type: input
+    id: ac_refs
+    attributes:
+      label: AC liên quan
+      description: "Ví dụ AC-01, AC-02"
+  - type: textarea
+    id: technical_refs
+    attributes:
+      label: Tham chiếu kỹ thuật
+  - type: textarea
+    id: risks
+    attributes:
+      label: Câu hỏi và rủi ro

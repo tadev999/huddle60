@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="470" viewBox="0 0 960 470" role="img" aria-labelledby="title desc">
+  <title id="title">AI-DLC: từ một câu yêu cầu đến tính năng đã nghiệm thu</title>
+  <desc id="desc">PO nhập một câu trên GitHub Issue, AI đề xuất cây Epic, Story, Task, PO xác nhận để tạo Issues, DEV làm trong IDE theo baseline đã chốt, Pull Request được kiểm tra tự động, PO nghiệm thu build.</desc>
+  <style>
+    .bg { fill: #f6f8fa; stroke: #d0d7de; }
+    .card { fill: #ffffff; stroke: #d0d7de; }
+    .head { font: 600 15px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #ffffff; }
+    .title { font: 700 20px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #1f2328; }
+    .sub { font: 400 13px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #59636e; }
+    .text { font: 400 13px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #1f2328; }
+    .mono { font: 400 12.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #1f2328; }
+    .ok { fill: #1a7f37; font-weight: 600; }
+    .q { fill: #9a6700; }
+    .muted { fill: #59636e; }
+    .arrow { stroke: #8c959f; stroke-width: 2; fill: none; marker-end: url(#tip); }
+    .po { fill: #8250df; }
+    .ai { fill: #0969da; }
+    .dev { fill: #1a7f37; }
+    .caret { animation: blink 1s steps(1) infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+    .s1 { animation: s1 14s infinite; }
+    .s2 { animation: s2 14s infinite; }
+    .s3 { animation: s3 14s infinite; }
+    .s4 { animation: s4 14s infinite; }
+    .s5 { animation: s5 14s infinite; }
+    .s6 { animation: s6 14s infinite; }
+    @keyframes s1 { 0% { opacity: 0; transform: translateY(8px); } 4%, 92% { opacity: 1; transform: none; } 98%, 100% { opacity: 0; } }
+    @keyframes s2 { 0%, 13% { opacity: 0; transform: translateY(8px); } 17%, 92% { opacity: 1; transform: none; } 98%, 100% { opacity: 0; } }
+    @keyframes s3 { 0%, 27% { opacity: 0; transform: translateY(8px); } 31%, 92% { opacity: 1; transform: none; } 98%, 100% { opacity: 0; } }
+    @keyframes s4 { 0%, 41% { opacity: 0; transform: translateY(8px); } 45%, 92% { opacity: 1; transform: none; } 98%, 100% { opacity: 0; } }
+    @keyframes s5 { 0%, 55% { opacity: 0; transform: translateY(8px); } 59%, 92% { opacity: 1; transform: none; } 98%, 100% { opacity: 0; } }
+    @keyframes s6 { 0%, 69% { opacity: 0; transform: translateY(8px); } 73%, 92% { opacity: 1; transform: none; } 98%, 100% { opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) {
+      .s1, .s2, .s3, .s4, .s5, .s6, .caret { animation: none; opacity: 1; }
+    }
+  </style>
+  <defs>
+    <marker id="tip" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8c959f"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0.5" y="0.5" width="959" height="469" rx="14"/>
+  <text class="title" x="30" y="38">Một câu yêu cầu → tính năng đã nghiệm thu</text>
+  <text class="sub" x="30" y="58">AI làm phần việc nặng. PO và DEV chỉ định hướng, xác nhận và kiểm chứng — tất cả ngay trên GitHub.</text>
+
+  <!-- 1. PO request -->
+  <g class="s1">
+    <rect class="card" x="30" y="80" width="280" height="160" rx="10"/>
+    <path class="po" d="M30 90 a10 10 0 0 1 10 -10 h260 a10 10 0 0 1 10 10 v24 h-280 z"/>
+    <text class="head" x="44" y="99">1 · PO tạo Issue</text>
+    <rect x="46" y="128" width="248" height="34" rx="6" fill="#f6f8fa" stroke="#d0d7de"/>
+    <text class="text" x="56" y="150">Lập trình login sử dụng Firebase</text>
+    <rect class="caret" x="262" y="137" width="2" height="17" fill="#1f2328"/>
+    <text class="text muted" x="46" y="190">Chỉ một câu, bằng tiếng Việt.</text>
+    <text class="text muted" x="46" y="212">Không cần IDE, không viết spec.</text>
+  </g>
+
+  <!-- 2. AI plan -->
+  <g class="s2">
+    <path class="arrow" d="M312 160 H336"/>
+    <rect class="card" x="340" y="80" width="280" height="160" rx="10"/>
+    <path class="ai" d="M340 90 a10 10 0 0 1 10 -10 h260 a10 10 0 0 1 10 10 v24 h-280 z"/>
+    <text class="head" x="354" y="99">2 · AI đề xuất kế hoạch</text>
+    <text class="mono" x="354" y="132">Epic  Xác thực người dùng</text>
+    <text class="mono" x="354" y="151">├ Story  Đăng nhập email</text>
+    <text class="mono" x="354" y="170">│ ├ Task  Cấu hình Firebase</text>
+    <text class="mono" x="354" y="189">│ └ Task  Form đăng nhập</text>
+    <text class="mono" x="354" y="208">└ Story  Đăng xuất</text>
+    <text class="mono q" x="354" y="229">? Có cần đăng nhập Google?</text>
+  </g>
+
+  <!-- 3. PO confirms -->
+  <g class="s3">
+    <path class="arrow" d="M622 160 H646"/>
+    <rect class="card" x="650" y="80" width="280" height="160" rx="10"/>
+    <path class="po" d="M650 90 a10 10 0 0 1 10 -10 h260 a10 10 0 0 1 10 10 v24 h-280 z"/>
+    <text class="head" x="664" y="99">3 · PO xác nhận</text>
+    <text class="mono" x="664" y="134">/ai-dlc create-plan …</text>
+    <text class="text ok" x="664" y="166">✓ Đã tạo 5 Issues liên kết</text>
+    <text class="text ok" x="664" y="189">✓ Đã thêm vào Project board</text>
+    <text class="text muted" x="664" y="215">AI chỉ đề xuất. PO quyết định.</text>
+  </g>
+
+  <!-- 4. DEV in IDE -->
+  <g class="s4">
+    <path class="arrow" d="M790 242 V266"/>
+    <rect class="card" x="650" y="270" width="280" height="170" rx="10"/>
+    <path class="dev" d="M650 280 a10 10 0 0 1 10 -10 h260 a10 10 0 0 1 10 10 v24 h-280 z"/>
+    <text class="head" x="664" y="289">4 · DEV làm trong IDE</text>
+    <rect x="664" y="306" width="252" height="70" rx="6" fill="#1f2328"/>
+    <text class="mono" x="674" y="327" fill="#e6edf3">$ huddle60 context --issue 15</text>
+    <text class="mono" x="674" y="346" fill="#7ee787">→ agent nhận đúng baseline</text>
+    <text class="mono" x="674" y="365" fill="#7ee787">✓ code + test [AC-01]</text>
+    <text class="text muted" x="664" y="401">Yêu cầu đã chốt, không đoán.</text>
+    <text class="text muted" x="664" y="421">Mỗi DEV dùng agent riêng.</text>
+  </g>
+
+  <!-- 5. PR gate -->
+  <g class="s5">
+    <path class="arrow" d="M648 355 H624"/>
+    <rect class="card" x="340" y="270" width="280" height="170" rx="10"/>
+    <path class="dev" d="M340 280 a10 10 0 0 1 10 -10 h260 a10 10 0 0 1 10 10 v24 h-280 z"/>
+    <text class="head" x="354" y="289">5 · Pull Request tự kiểm tra</text>
+    <text class="text ok" x="354" y="326">✓ ai-dlc/baseline  ready</text>
+    <text class="text ok" x="354" y="350">✓ CI  passed</text>
+    <text class="text ok" x="354" y="374">✓ Review  approved</text>
+    <text class="text muted" x="354" y="404">Yêu cầu bị sửa sau khi chốt?</text>
+    <text class="text muted" x="354" y="424">PR tự bị chặn, không merge nhầm.</text>
+  </g>
+
+  <!-- 6. PO accepts -->
+  <g class="s6">
+    <path class="arrow" d="M338 355 H314"/>
+    <rect class="card" x="30" y="270" width="280" height="170" rx="10"/>
+    <path class="po" d="M30 280 a10 10 0 0 1 10 -10 h260 a10 10 0 0 1 10 10 v24 h-280 z"/>
+    <text class="head" x="44" y="289">6 · PO nghiệm thu</text>
+    <text class="text ok" x="44" y="326">✓ Build trên main thành công</text>
+    <text class="mono" x="44" y="352">/ai-dlc accept …</text>
+    <text class="text ok" x="44" y="380">✓ Story → Done</text>
+    <text class="text muted" x="44" y="410">Mọi quyết định có hash và</text>
+    <text class="text muted" x="44" y="430">người duyệt, truy vết được.</text>
+  </g>
+</svg>

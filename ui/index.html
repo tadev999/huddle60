@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>huddle60</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="prompt">&gt;</span> huddle60<span class="cursor">_</span>
+        <a id="repo" class="repo" target="_blank" rel="noopener noreferrer"></a>
+      </div>
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-view="items" role="tab">Công việc</button>
+        <button class="tab" data-view="plan" role="tab">Lập kế hoạch</button>
+      </nav>
+      <div class="who">
+        <span id="planner-status" class="dot" title="planner"></span>
+        <span id="viewer"></span>
+        <span id="roles"></span>
+      </div>
+    </header>
+
+    <main>
+      <section id="view-items" class="view">
+        <div class="toolbar">
+          <div class="filters" id="filters">
+            <button class="chip active" data-filter="mine">Cần xử lý</button>
+            <button class="chip" data-filter="all">Tất cả</button>
+            <button class="chip" data-filter="awaiting-approval">Chờ PO duyệt</button>
+            <button class="chip" data-filter="awaiting-ready">Chờ DEV xác nhận</button>
+            <button class="chip" data-filter="in-progress">Đang triển khai</button>
+          </div>
+          <input
+            id="search"
+            class="search"
+            type="search"
+            placeholder="Tìm theo mã hoặc tiêu đề"
+            aria-label="Tìm công việc"
+          />
+          <button id="refresh" class="btn ghost" title="Tải lại">↻ Tải lại</button>
+        </div>
+        <div class="table-wrap">
+          <table class="items">
+            <thead>
+              <tr>
+                <th class="num">#</th>
+                <th>Loại</th>
+                <th>Tiêu đề</th>
+                <th>Trạng thái</th>
+                <th>Xác nhận</th>
+                <th class="actions-col">Thao tác</th>
+              </tr>
+            </thead>
+            <tbody id="items-body"></tbody>
+          </table>
+          <p id="items-empty" class="empty" hidden></p>
+        </div>
+      </section>
+
+      <section id="view-plan" class="view" hidden>
+        <div class="plan-grid">
+          <form id="plan-form" class="card">
+            <h2><span class="muted">01</span> Yêu cầu</h2>
+            <label for="plan-title">Tiêu đề <span class="muted">(tùy chọn)</span></label>
+            <input
+              id="plan-title"
+              maxlength="120"
+              placeholder="Đăng nhập bằng Google cho khách hàng"
+            />
+            <label for="plan-request">Mô tả</label>
+            <textarea
+              id="plan-request"
+              rows="12"
+              maxlength="20000"
+              placeholder="Mục tiêu, người dùng, phạm vi và ràng buộc"
+            ></textarea>
+            <div class="row">
+              <button id="plan-generate" class="btn primary" type="submit">Tạo kế hoạch</button>
+              <span id="plan-hint" class="muted small"></span>
+            </div>
+          </form>
+
+          <div id="plan-result" class="card" hidden>
+            <h2><span class="muted">02</span> Kế hoạch đề xuất</h2>
+            <p id="plan-summary" class="summary"></p>
+            <div id="plan-blocking" class="callout danger" hidden>
+              <strong>Cần làm rõ</strong>
+              <ul></ul>
+            </div>
+            <div id="plan-tree" class="tree"></div>
+            <details id="plan-questions">
+              <summary>Thông tin bổ sung</summary>
+              <h3>Câu hỏi mở</h3>
+              <ul id="plan-open"></ul>
+              <h3>Giả định</h3>
+              <ul id="plan-assumptions"></ul>
+              <h3>Nội dung đã làm rõ</h3>
+              <ul id="plan-clarifications"></ul>
+            </details>
+            <form id="refine-form" class="refine">
+              <label for="refine-text">Phản hồi</label>
+              <textarea id="refine-text" rows="3" maxlength="5000"></textarea>
+              <div class="row">
+                <button id="refine-btn" class="btn" type="submit">Cập nhật kế hoạch</button>
+                <button id="create-btn" class="btn primary" type="button">Tạo Issue</button>
+                <span id="create-hint" class="muted small"></span>
+              </div>
+            </form>
+            <div id="plan-created" class="callout ok" hidden>
+              <strong>Đã tạo trên GitHub</strong>
+              <ul></ul>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <aside class="log">
+      <div class="log-head">
+        <span>Hoạt động</span>
+        <button id="log-clear" class="btn ghost tiny">Xóa nhật ký</button>
+      </div>
+      <ol id="log"></ol>
+    </aside>
+
+    <dialog id="dialog">
+      <form method="dialog" class="dialog-inner">
+        <h2 id="dialog-title"></h2>
+        <div id="dialog-body"></div>
+        <div class="row end">
+          <button id="dialog-copy" class="btn" value="copy" type="button" hidden>Sao chép</button>
+          <button id="dialog-ok" class="btn primary" value="ok" hidden>ok</button>
+          <button class="btn ghost" value="cancel">Đóng</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="fatal" class="fatal" hidden></div>
+  </body>
+</html>

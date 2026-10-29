@@ -1,0 +1,45 @@
+name: Story
+description: Một phần giá trị sử dụng có thể nghiệm thu.
+title: "[Story] "
+labels: ["type:story"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Mục tiêu và người dùng
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Phạm vi
+      value: |
+        - Trong phạm vi:
+        - Ngoài phạm vi:
+    validations:
+      required: true
+  - type: input
+    id: parent
+    attributes:
+      label: Issue cha
+      description: "Epic chứa Story này, ví dụ #10"
+  - type: input
+    id: blocked_by
+    attributes:
+      label: Blocked by
+      description: "Ví dụ #12, #13"
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria
+      description: "Mỗi dòng một AC: - AC-01: Given ... When ... Then ..."
+    validations:
+      required: true
+  - type: textarea
+    id: technical_refs
+    attributes:
+      label: Tham chiếu kỹ thuật
+  - type: textarea
+    id: risks
+    attributes:
+      label: Câu hỏi và rủi ro

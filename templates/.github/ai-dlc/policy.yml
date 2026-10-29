@@ -1,0 +1,38 @@
+# AI-DLC policy. Changes must be reviewed by CODEOWNERS.
+# Roles use numeric GitHub user ids (https://api.github.com/users/<login>), which never change.
+# Accounts used only as AI tools must not hold a role.
+version: 1
+roles:
+  po:
+    - id: 1000001
+      login: replace-with-po-login
+  dev:
+    - id: 1000002
+      login: replace-with-dev-1
+    - id: 1000003
+      login: replace-with-dev-2
+  maintainer: []
+# Organization or user Project (v2) that receives Issues created by the planner. Remove to skip.
+project:
+  owner: your-org
+  number: 1
+lanes:
+  fast:
+    requires_po_approval: false
+  standard:
+    requires_po_approval: true
+  strict:
+    requires_po_approval: true
+# Pull requests in the fast lane may not touch these paths.
+sensitive_paths:
+  - ".github/**"
+  - "migrations/**"
+  - "src/auth/**"
+evidence:
+  branch: ai-dlc-evidence
+acceptance:
+  build_workflows:
+    - .github/workflows/build.yml
+planner:
+  max_nodes: 60
+  plan_ttl_days: 30

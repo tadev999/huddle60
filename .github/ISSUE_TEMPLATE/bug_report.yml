@@ -1,0 +1,27 @@
+name: Bug report
+description: Báo lỗi của AI-DLC (không đăng secret, token hoặc dữ liệu khách hàng).
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: Điều gì xảy ra
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Kết quả mong đợi
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Các bước tái hiện
+      description: Event GitHub, lệnh /ai-dlc, mã lỗi E_... nếu có.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Phiên bản / commit AI-DLC
