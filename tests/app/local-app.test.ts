@@ -137,7 +137,7 @@ describe("LocalApp", () => {
         stage: "in-progress",
         ready: { by: DEV.login, lane: "standard" },
       });
-      expect(await app.context(story.number)).toContain("AI-DLC-Baseline");
+      expect(await app.context(story.number)).toContain("HUDDLE60-Baseline");
 
       github.runs.set(42, {
         id: 42,
