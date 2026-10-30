@@ -53,7 +53,10 @@ export async function renderAgentContext(
           ]
         : []),
       "",
-      "Implement only what this baseline describes. Do not run /huddle60 approve, ready or accept.",
+      "## AI Engineering Directive",
+      "- Implement this as a complete, vertical testable slice across all required layers (UI, API, Data).",
+      "- You MUST write or update automated tests verifying that all acceptance criteria below pass before submitting the PR.",
+      "- Implement only what this baseline describes. Do not run /huddle60 approve, ready or accept.",
       "",
       `## ${snapshot.requirements.title}`,
       "",

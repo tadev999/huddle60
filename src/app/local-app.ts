@@ -498,6 +498,132 @@ export class LocalApp {
       issueNumber,
     );
   }
+
+  async getIssueDetails(issueNumber: number): Promise<{
+    number: number;
+    title: string;
+    body: string;
+    kind: WorkItemKind | null;
+    url: string;
+    labels: string[];
+    author: Actor;
+    state: string;
+    canEdit: boolean;
+  }> {
+    const policy = await this.workflow.policy();
+    const viewer = await this.viewer();
+    const canEdit = hasRole(policy, viewer.id, "dev") || hasRole(policy, viewer.id, "po");
+    const issue = await this.deps.github.getIssue(issueNumber);
+    return {
+      number: issue.number,
+      title: issue.title,
+      body: issue.body,
+      kind: kindFromLabels(issue.labels),
+      url: `${this.repoUrl}/issues/${issue.number}`,
+      labels: issue.labels,
+      author: issue.author,
+      state: issue.state,
+      canEdit,
+    };
+  }
+
+  async updateIssueDetails(
+    issueNumber: number,
+    patch: { title?: string; body?: string; comment?: string },
+  ): Promise<IssueData> {
+    const policy = await this.workflow.policy();
+    const viewer = await this.viewer();
+    if (!hasRole(policy, viewer.id, "dev") && !hasRole(policy, viewer.id, "po")) {
+      throw new AiDlcError(
+        "E_ROLE",
+        `${viewer.login} cannot update this issue: must hold po or dev role.`,
+      );
+    }
+    const issue = await this.deps.github.getIssue(issueNumber);
+    if (issue.isPullRequest || issue.state !== "open") {
+      throw new AiDlcError("E_SYNTAX", `#${issueNumber} is not an open Issue.`);
+    }
+
+    const updated = await this.deps.github.updateIssue(issueNumber, {
+      title: patch.title,
+      body: patch.body,
+    });
+
+    if (patch.comment && patch.comment.trim().length > 0) {
+      const roleName = hasRole(policy, viewer.id, "dev") ? "DEV" : "PO";
+      await this.deps.github.createComment(
+        issueNumber,
+        `> **Đề xuất / Cập nhật kỹ thuật từ @${viewer.login} (${roleName}):**\n\n${patch.comment.trim()}`,
+      );
+    }
+
+    // If already approved, mark as stale
+    const decisions = await this.workflow.listDecisions(issueNumber);
+    if (decisions.some((d) => d.kind === "approve")) {
+      await this.deps.github.addLabels(issueNumber, [LABELS.stale]);
+    }
+
+    return updated;
+  }
+
+  async refineIssueWithAi(
+    issueNumber: number,
+    instruction: string,
+  ): Promise<{ proposedTitle: string; proposedBody: string; summary: string }> {
+    if (!this.deps.model) {
+      throw new AiDlcError("E_CONFIG", "Gemini AI model is not configured.");
+    }
+    const issue = await this.deps.github.getIssue(issueNumber);
+    const system = `You are an AI-DLC specification refiner.
+A developer or product owner wants to revise or refine an existing GitHub Issue specification.
+The Issue follows the AI-DLC Vertical Testable Slice format with title and body (sections like Goal, Scope, Acceptance Criteria in Given/When/Then style, and Verification Notes).
+
+Your goal:
+Apply the user's requested changes, technical clarifications, or added edge cases.
+Always maintain or enhance the Acceptance Criteria with strict Given/When/Then formatting.
+Do NOT reduce scope unless specifically asked.
+Output valid JSON matching:
+{
+  "proposedTitle": "string",
+  "proposedBody": "string (full Markdown of the issue body)",
+  "summary": "Brief 1-2 sentence explanation of what was changed"
+}`;
+    const userPrompt = `Current Issue #${issue.number}:
+Title: ${issue.title}
+
+Current Body:
+${issue.body}
+
+Requested refinement / instruction:
+${instruction}`;
+
+    const jsonSchema = {
+      type: "object",
+      properties: {
+        proposedTitle: { type: "string" },
+        proposedBody: { type: "string" },
+        summary: { type: "string" },
+      },
+      required: ["proposedTitle", "proposedBody", "summary"],
+      additionalProperties: false,
+    };
+
+    const res = await this.deps.model.generateJson({
+      system,
+      user: userPrompt,
+      jsonSchema,
+    });
+
+    try {
+      return JSON.parse(res.text) as {
+        proposedTitle: string;
+        proposedBody: string;
+        summary: string;
+      };
+    } catch {
+      throw new AiDlcError("E_PLAN_SCHEMA", "AI returned invalid response format.");
+    }
+  }
 }
 
 async function mapLimit<T, R>(

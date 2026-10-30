@@ -2,20 +2,18 @@ import { execFile, execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
-import { GeminiModel } from "../adapters/gemini.js";
-import { GitBranchEvidenceStore } from "../adapters/git-evidence.js";
-import { connectRepository, octokitFromToken } from "../adapters/github.js";
 import { createJsonLogger } from "../adapters/memory.js";
+import { readConfigSync } from "../core/config.js";
 import { AiDlcError } from "../core/errors.js";
-import { POLICY_PATH, LEGACY_POLICY_PATH, parsePolicy } from "../core/policy.js";
-import { systemClock } from "../ports.js";
-import { LocalApp } from "./local-app.js";
+import { LocalAppManager } from "./manager.js";
 import { createAppHandler } from "./server.js";
 
-/** GitHub token of the person running the app: env first, then the GitHub CLI. */
+/** GitHub token of the person running the app: env first, then config.json, then the GitHub CLI. */
 export function resolveGitHubToken(): string {
   const fromEnv = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
   if (fromEnv) return fromEnv;
+  const fromConfig = readConfigSync().githubToken;
+  if (fromConfig) return fromConfig;
   try {
     const token = execFileSync("gh", ["auth", "token"], {
       encoding: "utf8",
@@ -25,12 +23,17 @@ export function resolveGitHubToken(): string {
   } catch {
     // fall through
   }
-  throw new AiDlcError("E_CONFIG", "No GitHub token. Run `gh auth login`, or export GH_TOKEN.");
+  throw new AiDlcError(
+    "E_CONFIG",
+    "No GitHub token. Run `gh auth login`, export GH_TOKEN, or configure in huddle60 settings.",
+  );
 }
 
-/** Gemini key from env, or the macOS Keychain item `huddle60-gemini`. Optional. */
+/** Gemini key from env, config.json, or the macOS Keychain item `huddle60-gemini`. Optional. */
 export function resolveGeminiKey(): string | null {
   if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
+  const fromConfig = readConfigSync().geminiApiKey;
+  if (fromConfig) return fromConfig;
   if (process.platform !== "darwin") return null;
   try {
     const key = execFileSync("security", ["find-generic-password", "-s", "huddle60-gemini", "-w"], {
@@ -54,8 +57,9 @@ function openBrowser(url: string): void {
 }
 
 export interface StartOptions {
-  owner: string;
-  repo: string;
+  owner?: string;
+  repo?: string;
+  host?: string;
   port: number;
   open: boolean;
   uiDir?: string;
@@ -63,51 +67,37 @@ export interface StartOptions {
 
 export async function startLocalApp(options: StartOptions): Promise<void> {
   const logger = createJsonLogger({ component: "huddle60-ui" });
-  const octokit = octokitFromToken(resolveGitHubToken());
-  const github = await connectRepository(octokit, options.owner, options.repo);
-  let policySource = await github.readFile(POLICY_PATH, await github.getDefaultBranch());
-  if (!policySource) {
-    policySource = await github.readFile(LEGACY_POLICY_PATH, await github.getDefaultBranch());
-  }
-  if (!policySource)
-    throw new AiDlcError(
-      "E_POLICY_INVALID",
-      `Missing ${POLICY_PATH}. Run \`huddle60 init\` first.`,
-    );
-  const policy = parsePolicy(policySource);
-  const geminiKey = resolveGeminiKey();
-  const app = new LocalApp({
-    github,
-    evidence: new GitBranchEvidenceStore(
-      octokit,
-      options.owner,
-      options.repo,
-      policy.evidence.branch,
-    ),
-    model: geminiKey
-      ? new GeminiModel({
-          apiKey: geminiKey,
-          model: process.env.AI_DLC_MODEL ?? "gemini-2.5-flash",
-          timeoutMs: 120_000,
-          maxRetries: 1,
-        })
-      : null,
-    clock: systemClock,
-    logger,
-  });
-  const viewer = await app.viewer();
-  const token = randomBytes(32).toString("base64url");
+  const explicitRepo =
+    options.owner && options.repo ? `${options.owner}/${options.repo}` : undefined;
+  const manager = new LocalAppManager({ explicitRepo, logger });
+  await manager.initialize();
+
+  const token = process.env.HUDDLE60_SESSION_TOKEN || randomBytes(32).toString("base64url");
+  const host = options.host ?? process.env.HOST ?? "127.0.0.1";
   const uiDir = options.uiDir ?? fileURLToPath(new URL("../ui/", import.meta.url));
-  const server = createServer(createAppHandler({ app, token, port: options.port, uiDir, logger }));
+  const server = createServer(
+    createAppHandler({ manager, token, host, port: options.port, uiDir, logger }),
+  );
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(options.port, "127.0.0.1", resolve);
+    server.listen(options.port, host, resolve);
   });
-  const url = `http://127.0.0.1:${options.port}/#token=${token}`;
+  const displayHost = host === "0.0.0.0" ? "127.0.0.1" : host;
+  const url = `http://${displayHost}:${options.port}/#token=${token}`;
+
+  const settings = await manager.getSettings();
+  const title =
+    settings.status === "ready"
+      ? `huddle60 · AI-DLC for ${settings.repo} (signed in as @${settings.githubUser?.login})`
+      : `huddle60 · Cần cấu hình (vui lòng mở giao diện để cài đặt)`;
+  const plannerStatus = settings.hasGeminiKey
+    ? `Planner: Gemini ready (${settings.geminiModel})`
+    : "Planner: disabled (chưa có GEMINI_API_KEY)";
+
   process.stdout.write(
     [
-      `huddle60 · AI-DLC for ${options.owner}/${options.repo} (signed in as ${viewer.login})`,
-      `Planner: ${geminiKey ? "Gemini ready" : "disabled (set GEMINI_API_KEY)"}`,
+      title,
+      plannerStatus,
       "",
       `  ${url}`,
       "",

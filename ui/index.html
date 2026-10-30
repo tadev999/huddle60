@@ -10,13 +10,30 @@
   </head>
   <body>
     <header class="topbar">
-      <div class="brand">
-        <span class="prompt">&gt;</span> huddle60<span class="cursor">_</span>
-        <a id="repo" class="repo" target="_blank" rel="noopener noreferrer"></a>
+      <div class="brand-wrap">
+        <div class="brand">
+          <span class="prompt">&gt;</span> huddle60<span class="cursor">_</span>
+          <span id="tenant-badge" class="badge ok" hidden></span>
+        </div>
+        <div class="repo-switcher">
+          <span class="repo-icon" title="Dự án đang chọn">📁</span>
+          <select id="repo-switcher-select" title="Chuyển đổi Repository (Dự án)">
+            <option value="" disabled selected>Đang tải...</option>
+          </select>
+          <a
+            id="repo-gh-link"
+            class="btn ghost tiny"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Mở repository trên GitHub"
+            >↗</a
+          >
+        </div>
       </div>
       <nav class="tabs" role="tablist">
         <button class="tab active" data-view="items" role="tab">Công việc</button>
         <button class="tab" data-view="plan" role="tab">Lập kế hoạch</button>
+        <button class="tab" data-view="settings" role="tab">⚙️ Cài đặt</button>
       </nav>
       <div class="who">
         <span id="planner-status" class="dot" title="planner"></span>
@@ -118,6 +135,149 @@
           </div>
         </div>
       </section>
+
+      <section id="view-settings" class="view" hidden>
+        <div class="settings-wrap">
+          <div id="settings-alert" class="callout warning" hidden></div>
+
+          <div class="card settings-card">
+            <div class="card-head">
+              <h2><span class="muted">01</span> Kết nối GitHub</h2>
+              <span id="github-status-badge" class="badge">Chưa kết nối</span>
+            </div>
+            <p class="desc">
+              Dùng để đồng bộ Issues, kiểm tra quyền hạn của PO/DEV và quản lý nhánh bằng chứng
+              (evidence branch).
+            </p>
+
+            <div id="github-user-row" class="user-row" hidden>
+              <span class="avatar-icon">👤</span>
+              <div>
+                <strong id="github-user-login"></strong>
+                <span id="github-user-id" class="muted small"></span>
+              </div>
+            </div>
+
+            <div id="github-oauth-section" class="oauth-section" hidden>
+              <a id="btn-login-github" href="/api/auth/github" class="btn primary oauth-btn">
+                🔑 Đăng nhập nhanh với GitHub
+              </a>
+              <div class="divider small muted">
+                <span>hoặc sử dụng Personal Access Token bên dưới</span>
+              </div>
+            </div>
+
+            <label for="input-github-token">
+              Personal Access Token (PAT)
+              <span class="muted small">(cần quyền <code>repo</code>)</span>
+            </label>
+            <div class="input-row">
+              <input
+                id="input-github-token"
+                type="password"
+                placeholder="ghp_... (để trống để giữ nguyên token hiện tại)"
+                autocomplete="off"
+              />
+              <button id="btn-test-github" class="btn" type="button">Kiểm tra</button>
+            </div>
+            <div id="github-test-msg" class="test-msg small" hidden></div>
+            <p class="hint muted small">
+              💡 Bạn có thể tạo token mới tại
+              <a
+                href="https://github.com/settings/tokens/new?scopes=repo&description=huddle60"
+                target="_blank"
+                rel="noopener noreferrer"
+                >GitHub Settings &gt; Developer Settings &gt; Personal access tokens</a
+              >
+              (chọn quyền <strong>repo</strong>).
+            </p>
+          </div>
+
+          <div class="card settings-card">
+            <div class="card-head">
+              <h2><span class="muted">02</span> Kho lưu trữ (Repository)</h2>
+              <span id="repo-status-badge" class="badge">Chưa chọn</span>
+            </div>
+            <p class="desc">
+              Repository trên GitHub mà huddle60 sẽ quản lý. Bạn có thể làm việc với bất kỳ repo nào
+              mà bạn có quyền truy cập.
+            </p>
+
+            <label for="input-repo">Tên Repository (dạng: <code>owner/name</code>)</label>
+            <input
+              id="input-repo"
+              type="text"
+              list="repo-datalist"
+              placeholder="ví dụ: tadev999/huddle60_test"
+            />
+            <datalist id="repo-datalist"></datalist>
+            <div id="repo-source-hint" class="hint muted small"></div>
+
+            <div id="recent-repos-wrap" class="recent-repos-section" hidden>
+              <label class="small muted">Kho lưu trữ gần đây (bấm để chuyển nhanh):</label>
+              <div id="recent-repos-chips" class="recent-chips"></div>
+            </div>
+
+            <div id="repo-init-card" class="callout warning init-card" hidden>
+              <strong>⚠️ Kho lưu trữ chưa được khởi tạo AI-DLC</strong>
+              <p>
+                Kho lưu trữ này chưa có nhãn chuẩn <code>huddle60:*</code>, nhánh bằng chứng
+                <code>huddle60-evidence</code> hoặc file <code>.github/huddle60/policy.yml</code>.
+              </p>
+              <button id="btn-init-repo" class="btn primary" type="button">
+                ⚡ Khởi tạo Repository ngay
+              </button>
+            </div>
+          </div>
+
+          <div class="card settings-card">
+            <div class="card-head">
+              <h2><span class="muted">03</span> Gemini AI Planner</h2>
+              <span id="gemini-status-badge" class="badge">Chưa có key</span>
+            </div>
+            <p class="desc">
+              AI model dùng để phân tích yêu cầu từ PO, đề xuất cây Epic/Story/Task và các câu hỏi
+              làm rõ Given/When/Then.
+            </p>
+
+            <label for="input-gemini-key">Gemini API Key</label>
+            <div class="input-row">
+              <input
+                id="input-gemini-key"
+                type="password"
+                placeholder="AQ.Ab8... hoặc AIzaSy... (để trống để giữ nguyên key hiện tại)"
+                autocomplete="off"
+              />
+              <button id="btn-test-gemini" class="btn" type="button">Kiểm tra Key</button>
+            </div>
+            <div id="gemini-test-msg" class="test-msg small" hidden></div>
+            <p class="hint muted small">
+              Lấy API key miễn phí tại
+              <a
+                href="https://aistudio.google.com/app/apikey"
+                target="_blank"
+                rel="noopener noreferrer"
+                >Google AI Studio</a
+              >.
+            </p>
+
+            <label for="select-gemini-model">Model AI</label>
+            <select id="select-gemini-model">
+              <option value="gemini-3.8-flash">gemini-3.8-flash (Mới nhất, khuyên dùng)</option>
+              <option value="gemini-3.7-flash">gemini-3.7-flash</option>
+              <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+              <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+            </select>
+          </div>
+
+          <div class="settings-actions">
+            <button id="btn-save-settings" class="btn primary" type="button">
+              💾 Lưu cấu hình
+            </button>
+            <span id="save-status-msg" class="save-status-msg"></span>
+          </div>
+        </div>
+      </section>
     </main>
 
     <aside class="log">
@@ -138,6 +298,206 @@
           <button class="btn ghost" value="cancel">Đóng</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="spec-dialog" class="spec-modal">
+      <div class="spec-modal-inner">
+        <div class="spec-modal-head">
+          <div>
+            <div class="spec-head-meta">
+              <span id="spec-kind-badge" class="badge"></span>
+              <span id="spec-issue-num" class="num"></span>
+              <a
+                id="spec-gh-link"
+                href="#"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="btn ghost tiny"
+                title="Mở trên GitHub"
+                >↗ GitHub</a
+              >
+            </div>
+            <h2>Chỉnh sửa Đặc tả & Kế hoạch (Spec-Driven)</h2>
+          </div>
+          <button
+            id="spec-modal-close-x"
+            class="btn ghost tiny close-btn"
+            type="button"
+            aria-label="Đóng"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div id="spec-alert-stale" class="callout warning small" hidden>
+          ⚠️ <strong>Lưu ý:</strong> Issue này đã được PO Approve. Việc sửa đổi nội dung sẽ tự động
+          đánh dấu <code>stale</code> để PO nghiệm thu/phê duyệt lại.
+        </div>
+
+        <div class="spec-form-body">
+          <div class="form-group">
+            <label for="spec-input-title"><strong>Tiêu đề Issue</strong></label>
+            <input id="spec-input-title" type="text" placeholder="Tiêu đề tính năng" />
+          </div>
+
+          <div class="spec-ai-card">
+            <div class="spec-ai-head">
+              <span class="ai-sparkle">✨</span>
+              <strong>Trợ lý AI Refine (Gemini)</strong>
+              <span class="muted small"
+                >— Tự động bổ sung Given/When/Then, edge case hoặc làm rõ kỹ thuật</span
+              >
+            </div>
+            <div class="spec-ai-input-row">
+              <textarea
+                id="spec-ai-instruction"
+                rows="2"
+                placeholder="Ví dụ: Bổ sung thêm test case khi token hết hạn và định dạng Acceptance Criteria rõ ràng..."
+              ></textarea>
+              <button id="spec-btn-ai-refine" class="btn" type="button">
+                🤖 AI đề xuất sửa đổi
+              </button>
+            </div>
+            <div id="spec-ai-feedback" class="test-msg small" hidden></div>
+          </div>
+
+          <div class="form-group">
+            <label for="spec-input-body">
+              <strong>Nội dung Đặc tả (Markdown)</strong>
+              <span class="muted small"
+                >— Chuẩn AI Engineering: Vertical Slice, Given/When/Then, Scope</span
+              >
+            </label>
+            <textarea id="spec-input-body" rows="14" class="code-font"></textarea>
+          </div>
+
+          <div class="form-group">
+            <label for="spec-input-comment">
+              <strong>Ghi chú / Bình luận kỹ thuật</strong>
+              <span class="muted small"
+                >(Tùy chọn: tự động post comment từ DEV/PO giải thích lý do thay đổi)</span
+              >
+            </label>
+            <input
+              id="spec-input-comment"
+              type="text"
+              placeholder="Ví dụ: DEV bổ sung tiêu chí kiểm thử cho token refresh theo yêu cầu..."
+            />
+          </div>
+        </div>
+
+        <div class="spec-modal-footer">
+          <div class="spec-footer-left">
+            <span id="spec-save-status" class="status-msg small"></span>
+          </div>
+          <div class="row">
+            <button id="spec-btn-cancel" class="btn ghost" type="button">Đóng</button>
+            <button id="spec-btn-save" class="btn primary" type="button">
+              💾 Lưu thay đổi lên GitHub
+            </button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="spec-dialog" class="spec-modal">
+      <div class="spec-modal-inner">
+        <div class="spec-modal-head">
+          <div>
+            <div class="spec-head-meta">
+              <span id="spec-kind-badge" class="badge"></span>
+              <span id="spec-issue-num" class="num"></span>
+              <a
+                id="spec-gh-link"
+                href="#"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="btn ghost tiny"
+                title="Mở trên GitHub"
+                >↗ GitHub</a
+              >
+            </div>
+            <h2>Chỉnh sửa Đặc tả & Kế hoạch (Spec-Driven)</h2>
+          </div>
+          <button
+            id="spec-modal-close-x"
+            class="btn ghost tiny close-btn"
+            type="button"
+            aria-label="Đóng"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div id="spec-alert-stale" class="callout warning small" hidden>
+          ⚠️ <strong>Lưu ý:</strong> Issue này đã được PO Approve. Việc sửa đổi nội dung sẽ tự động
+          đánh dấu <code>stale</code> để PO nghiệm thu/phê duyệt lại.
+        </div>
+
+        <div class="spec-form-body">
+          <div class="form-group">
+            <label for="spec-input-title"><strong>Tiêu đề Issue</strong></label>
+            <input id="spec-input-title" type="text" placeholder="Tiêu đề tính năng" />
+          </div>
+
+          <div class="spec-ai-card">
+            <div class="spec-ai-head">
+              <span class="ai-sparkle">✨</span>
+              <strong>Trợ lý AI Refine (Gemini)</strong>
+              <span class="muted small"
+                >— Tự động bổ sung Given/When/Then, edge case hoặc làm rõ kỹ thuật</span
+              >
+            </div>
+            <div class="spec-ai-input-row">
+              <textarea
+                id="spec-ai-instruction"
+                rows="2"
+                placeholder="Ví dụ: Bổ sung thêm test case khi token hết hạn và định dạng Acceptance Criteria rõ ràng..."
+              ></textarea>
+              <button id="spec-btn-ai-refine" class="btn" type="button">
+                🤖 AI đề xuất sửa đổi
+              </button>
+            </div>
+            <div id="spec-ai-feedback" class="test-msg small" hidden></div>
+          </div>
+
+          <div class="form-group">
+            <label for="spec-input-body">
+              <strong>Nội dung Đặc tả (Markdown)</strong>
+              <span class="muted small"
+                >— Chuẩn AI Engineering: Vertical Slice, Given/When/Then, Scope</span
+              >
+            </label>
+            <textarea id="spec-input-body" rows="14" class="code-font"></textarea>
+          </div>
+
+          <div class="form-group">
+            <label for="spec-input-comment">
+              <strong>Ghi chú / Bình luận kỹ thuật</strong>
+              <span class="muted small"
+                >(Tùy chọn: tự động post comment từ DEV/PO giải thích lý do thay đổi)</span
+              >
+            </label>
+            <input
+              id="spec-input-comment"
+              type="text"
+              placeholder="Ví dụ: DEV bổ sung tiêu chí kiểm thử cho token refresh theo yêu cầu..."
+            />
+          </div>
+        </div>
+
+        <div class="spec-modal-footer">
+          <div class="spec-footer-left">
+            <span id="spec-save-status" class="status-msg small"></span>
+          </div>
+          <div class="row">
+            <button id="spec-btn-cancel" class="btn ghost" type="button">Đóng</button>
+            <button id="spec-btn-save" class="btn primary" type="button">
+              💾 Lưu thay đổi lên GitHub
+            </button>
+          </div>
+        </div>
+      </div>
     </dialog>
 
     <div id="fatal" class="fatal" hidden></div>

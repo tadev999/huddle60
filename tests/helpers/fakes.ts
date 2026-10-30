@@ -154,6 +154,14 @@ export class FakeGitHub implements LocalGitHubPort {
     return created;
   }
 
+  async updateIssue(
+    issueNumber: number,
+    patch: { title?: string; body?: string },
+  ): Promise<IssueData> {
+    this.editIssue(issueNumber, patch);
+    return this.getIssue(issueNumber);
+  }
+
   async listIssuesWithLabel(label: string): Promise<IssueData[]> {
     return [...this.issues.values()]
       .filter((issue) => issue.labels.includes(label))

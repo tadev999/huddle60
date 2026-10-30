@@ -40,6 +40,17 @@ Huddle60 được thiết kế và triển khai theo mô hình **zero-infra**, k
 3. **Mọi quyết định đều có chữ ký nội dung**: Quyết định duyệt (`approve`), sẵn sàng (`ready`), nghiệm thu (`accept`) bắt buộc gắn liền với mã hash chuẩn hóa của nội dung Issue tại thời điểm quyết định. Bất kỳ sự thay đổi nào của Issue sau đó đều làm mất hiệu lực quyết định.
 4. **Git Branch làm kho lưu trữ bằng chứng**: Toàn bộ dữ liệu snapshot và receipt được ghi vào branch `huddle60-evidence` thông qua Git Data API. Branch này được bảo vệ bằng GitHub Ruleset để ngăn chặn ghi đè hoặc chỉnh sửa lịch sử commit.
 
+### 1.4 Triết lý AI Engineering: Lát cắt dọc kiểm thử được (Vertical Testable Slices)
+
+Trong kỷ nguyên phát triển phần mềm có AI Coding Agents (Cursor, Claude Code, Copilot, Devin, SWE-bench agents):
+
+- **Phê phán mô hình Agile/Scrum truyền thống:** Cách phân rã ticket theo tầng công nghệ (Horizontal Slices: Task UI, Task Backend API, Task Database migration) ra đời nhằm phục vụ việc chia việc cho những con người có kỹ năng chuyên môn riêng biệt. Trong môi trường AI, cách chia này gây ra **phân mảnh ngữ cảnh (context fragmentation)**: Agent làm UI phải mock dữ liệu giả, Agent làm API không biết UI render thế nào, và không một PR nào có thể kiểm thử độc lập được.
+- **Mô hình Spec-Driven & Vertical Slices của Huddle60:**
+  - AI Coding Agents là **Fullstack-by-default**: Một Agent có thể sửa đổi DB, backend API, giao diện UI và viết bộ test tự động chỉ trong một PR duy nhất.
+  - Mỗi đơn vị công việc trong Huddle60 được thiết kế như một **lát cắt dọc hoàn chỉnh** có thể nghiệm thu độc lập (End-to-End Testable Capability).
+  - **Acceptance Criteria (Given / When / Then)** đóng vai trò là đặc tả hành vi (Behavior Specification).
+  - Agent khi nhận context từ Huddle60 (`huddle60 context --issue <n>`) bắt buộc phải hiện thực hóa kèm theo **bài kiểm thử tự động (Unit / Integration / E2E test)** chứng minh toàn bộ các tiêu chí AC đã vượt qua trước khi PR được chấp nhận qua gate `huddle60/baseline`.
+
 ---
 
 ## 2. Cấu trúc repository

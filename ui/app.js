@@ -12,6 +12,8 @@ const state = {
   pending: new Map(), // issueNumber -> action
   draft: null,
   collapsed: new Set(),
+  userRepos: [],
+  loadingRepos: false,
 };
 
 // ---------- utilities ----------
@@ -39,8 +41,24 @@ function readToken() {
   if (match) {
     sessionStorage.setItem(TOKEN_KEY, match[1]);
     history.replaceState(null, "", location.pathname);
+    return match[1];
   }
-  return sessionStorage.getItem(TOKEN_KEY);
+  const stored = sessionStorage.getItem(TOKEN_KEY);
+  if (stored) return stored;
+
+  const meta = document.querySelector('meta[name="huddle60-session-token"]');
+  if (meta && meta.content) {
+    sessionStorage.setItem(TOKEN_KEY, meta.content);
+    return meta.content;
+  }
+
+  const cookieMatch = /(?:^|;\s*)huddle60_token=([\w-]+)/.exec(document.cookie);
+  if (cookieMatch) {
+    sessionStorage.setItem(TOKEN_KEY, cookieMatch[1]);
+    return cookieMatch[1];
+  }
+
+  return null;
 }
 
 const token = readToken();
@@ -52,10 +70,12 @@ class ApiError extends Error {
   }
 }
 
-async function api(path, body) {
-  const init = { headers: { "x-ai-dlc-token": token ?? "" } };
+async function api(path, body, method) {
+  const init = {
+    headers: { "x-ai-dlc-token": token ?? "" },
+    method: method ?? (body !== undefined ? "POST" : "GET"),
+  };
   if (body !== undefined) {
-    init.method = "POST";
     init.headers["content-type"] = "application/json";
     init.body = JSON.stringify(body);
   }
@@ -240,6 +260,19 @@ function actionsFor(item) {
       "↗",
     ),
   ];
+  if (hasRole("dev") || hasRole("po")) {
+    buttons.push(
+      h(
+        "button",
+        {
+          class: "btn ghost",
+          title: "Sửa đặc tả & kế hoạch (kèm AI hỗ trợ)",
+          onclick: () => openSpecEditor(item),
+        },
+        "✏️ Sửa",
+      ),
+    );
+  }
   if (item.stage === "in-progress") {
     buttons.push(
       h(
@@ -509,6 +542,113 @@ async function showContext(button, item) {
   });
 }
 
+// ---------- spec editor ----------
+
+let editingSpecItem = null;
+
+async function openSpecEditor(item) {
+  editingSpecItem = item;
+  const dialog = $("#spec-dialog");
+  $("#spec-kind-badge").className = `badge ${item.kind}`;
+  $("#spec-kind-badge").textContent = item.kind;
+  $("#spec-issue-num").textContent = `#${item.number}`;
+  $("#spec-gh-link").href = item.url;
+  $("#spec-alert-stale").hidden = item.stage === "awaiting-approval";
+
+  $("#spec-input-title").value = "Đang tải...";
+  $("#spec-input-body").value = "Đang tải dữ liệu từ GitHub...";
+  $("#spec-input-comment").value = "";
+  $("#spec-ai-instruction").value = "";
+  $("#spec-ai-feedback").hidden = true;
+  $("#spec-save-status").textContent = "";
+
+  dialog.showModal();
+
+  try {
+    const details = await api(`/api/issues/${item.number}`);
+    $("#spec-input-title").value = details.title;
+    $("#spec-input-body").value = details.body;
+  } catch (error) {
+    logError(`Không tải được chi tiết #${item.number}`, error);
+    $("#spec-input-body").value = `Lỗi tải: ${error.message}`;
+  }
+}
+
+async function handleAiRefineSpec() {
+  if (!editingSpecItem) return;
+  const instruction = $("#spec-ai-instruction").value.trim();
+  const feedback = $("#spec-ai-feedback");
+  const button = $("#spec-btn-ai-refine");
+
+  if (!instruction) {
+    feedback.className = "test-msg err";
+    feedback.textContent = "Vui lòng nhập yêu cầu chỉnh sửa cho AI.";
+    feedback.hidden = false;
+    return;
+  }
+
+  feedback.hidden = true;
+  await withBusy(button, async () => {
+    try {
+      const result = await api(`/api/issues/${editingSpecItem.number}/ai-refine`, { instruction });
+      if (result.proposedTitle) {
+        $("#spec-input-title").value = result.proposedTitle;
+      }
+      if (result.proposedBody) {
+        $("#spec-input-body").value = result.proposedBody;
+      }
+      feedback.className = "test-msg ok";
+      feedback.textContent = `✨ AI đã cập nhật: ${result.summary || "Đã áp dụng các sửa đổi theo yêu cầu."}`;
+      feedback.hidden = false;
+    } catch (error) {
+      feedback.className = "test-msg err";
+      feedback.textContent = `Lỗi: ${error.message}`;
+      feedback.hidden = false;
+    }
+  });
+}
+
+async function handleSaveSpecChanges() {
+  if (!editingSpecItem) return;
+  const button = $("#spec-btn-save");
+  const status = $("#spec-save-status");
+  const title = $("#spec-input-title").value.trim();
+  const body = $("#spec-input-body").value;
+  const comment = $("#spec-input-comment").value.trim();
+
+  if (!title) {
+    status.className = "status-msg err";
+    status.textContent = "Tiêu đề không được để trống.";
+    return;
+  }
+
+  status.className = "status-msg";
+  status.textContent = "Đang lưu lên GitHub...";
+
+  await withBusy(button, async () => {
+    try {
+      await api(
+        `/api/issues/${editingSpecItem.number}`,
+        {
+          title,
+          body,
+          ...(comment ? { comment } : {}),
+        },
+        "PATCH",
+      );
+      status.className = "status-msg ok";
+      status.textContent = "Đã lưu thành công!";
+      log("ok", `#${editingSpecItem.number} đã cập nhật đặc tả trên GitHub`);
+      $("#spec-dialog").close();
+      await loadItems();
+    } catch (error) {
+      status.className = "status-msg err";
+      status.textContent = `Lỗi lưu: ${error.message}`;
+      logError(`#${editingSpecItem.number} cập nhật đặc tả thất bại`, error);
+    }
+  });
+}
+
 // ---------- plan ----------
 
 function renderNode(node, byParent) {
@@ -701,6 +841,283 @@ async function createIssues() {
   });
 }
 
+// ---------- settings ----------
+
+async function loadSettings() {
+  const msg = $("#save-status-msg");
+  if (msg) msg.textContent = "";
+
+  try {
+    const data = await api("/api/settings");
+    state.settings = data;
+
+    // Repo
+    $("#input-repo").value = data.repo || "";
+    const sourceHints = {
+      cli: "(Được truyền qua cờ dòng lệnh --repo)",
+      git: "(Tự động nhận diện từ git remote local)",
+      env: "(Lấy từ biến môi trường GITHUB_REPOSITORY)",
+      config: "(Được lưu trong file cấu hình local)",
+      none: "",
+    };
+    $("#repo-source-hint").textContent = sourceHints[data.repoSource] || "";
+
+    // Recent repos chips
+    const recentWrap = $("#recent-repos-wrap");
+    const chipsContainer = $("#recent-repos-chips");
+    const currentRepo = data.repo || "";
+    const recentRepos = data.recentRepos || (currentRepo ? [currentRepo] : []);
+
+    // Update datalist with user repos
+    const datalist = $("#repo-datalist");
+    if (datalist && state.userRepos.length > 0 && !datalist.children.length) {
+      datalist.innerHTML = "";
+      for (const r of state.userRepos) {
+        const opt = document.createElement("option");
+        opt.value = r.fullName;
+        if (r.description) opt.label = r.description;
+        datalist.appendChild(opt);
+      }
+    }
+
+    if (recentRepos.length > 0) {
+      recentWrap.hidden = false;
+      chipsContainer.replaceChildren(
+        ...recentRepos.map((r) => {
+          const isActive = r === currentRepo;
+          const chip = h(
+            "div",
+            { class: `recent-chip ${isActive ? "active" : ""}` },
+            h(
+              "span",
+              {
+                onclick: async () => {
+                  if (r !== currentRepo) {
+                    await switchRepository(r);
+                  }
+                },
+              },
+              `📁 ${r}`,
+            ),
+            h(
+              "button",
+              {
+                class: "recent-chip-remove",
+                title: "Xóa khỏi danh sách gần đây",
+                onclick: async (e) => {
+                  e.stopPropagation();
+                  await removeRecentRepository(r);
+                },
+              },
+              "✕",
+            ),
+          );
+          return chip;
+        }),
+      );
+    } else {
+      recentWrap.hidden = true;
+    }
+
+    const repoBadge = $("#repo-status-badge");
+    repoBadge.className = "badge";
+    if (data.policyStatus === "ready") {
+      repoBadge.classList.add("ok");
+      repoBadge.textContent = "✓ Sẵn sàng (AI-DLC)";
+    } else if (data.repo) {
+      repoBadge.classList.add("warn");
+      repoBadge.textContent = "Chưa khởi tạo policy";
+    } else {
+      repoBadge.classList.add("danger");
+      repoBadge.textContent = "Chưa chọn repo";
+    }
+
+    $("#repo-init-card").hidden = !(
+      data.hasGithubToken &&
+      data.repo &&
+      data.policyStatus !== "ready"
+    );
+
+    // GitHub
+    const ghBadge = $("#github-status-badge");
+    ghBadge.className = "badge";
+    if (data.githubUser) {
+      ghBadge.classList.add("ok");
+      ghBadge.textContent = `✓ Đã kết nối (@${data.githubUser.login})`;
+      $("#github-user-row").hidden = false;
+      $("#github-user-login").textContent = `@${data.githubUser.login}`;
+      $("#github-user-id").textContent = `ID: ${data.githubUser.id}`;
+    } else if (data.hasGithubToken) {
+      ghBadge.classList.add("warn");
+      ghBadge.textContent = "Token đã cấu hình";
+      $("#github-user-row").hidden = true;
+    } else {
+      ghBadge.classList.add("danger");
+      ghBadge.textContent = "Chưa có token";
+      $("#github-user-row").hidden = true;
+    }
+
+    if (data.githubTokenMasked) {
+      $("#input-github-token").placeholder = `${data.githubTokenMasked} (để trống để giữ nguyên)`;
+    }
+
+    try {
+      const authStatus = await api("/api/auth/status");
+      const oauthSection = $("#github-oauth-section");
+      if (oauthSection) {
+        oauthSection.hidden = !authStatus.oauthEnabled || Boolean(data.githubUser);
+      }
+    } catch {}
+
+    // Gemini
+    const geminiBadge = $("#gemini-status-badge");
+    geminiBadge.className = "badge";
+    if (data.hasGeminiKey) {
+      geminiBadge.classList.add("ok");
+      geminiBadge.textContent = `✓ Sẵn sàng (${data.geminiModel})`;
+      $("#input-gemini-key").placeholder = `${data.geminiKeyMasked} (để trống để giữ nguyên)`;
+    } else {
+      geminiBadge.classList.add("warn");
+      geminiBadge.textContent = "Chưa có API key";
+      $("#input-gemini-key").placeholder = "AQ.Ab8... hoặc AIzaSy... (để trống để tắt planner)";
+    }
+
+    if (data.geminiModel) {
+      $("#select-gemini-model").value = data.geminiModel;
+    }
+
+    // Alert
+    const alert = $("#settings-alert");
+    if (data.status === "needs_setup") {
+      alert.hidden = false;
+      const reasons = [];
+      if (data.missing.includes("missing_github_token"))
+        reasons.push("Nhập Personal Access Token của GitHub");
+      if (data.missing.includes("invalid_github_token"))
+        reasons.push("GitHub Token không hợp lệ hoặc đã hết hạn");
+      if (data.missing.includes("missing_repo"))
+        reasons.push("Nhập tên Repository cần quản lý (owner/name)");
+      if (data.missing.includes("repo_not_found"))
+        reasons.push(
+          "Không tìm thấy Repository trên GitHub hoặc tài khoản không có quyền truy cập",
+        );
+      if (data.missing.includes("missing_policy"))
+        reasons.push("Repository chưa khởi tạo AI-DLC policy (bấm nút Khởi tạo bên dưới)");
+      alert.innerHTML = `<strong>⚠️ Cần hoàn tất cấu hình để sử dụng:</strong><ul>${reasons.map((r) => `<li>${r}</li>`).join("")}</ul>`;
+    } else {
+      alert.hidden = true;
+    }
+  } catch (err) {
+    log("fail", "Không thể tải cài đặt", { text: err.message });
+  }
+}
+
+async function testGithubToken() {
+  const tokenVal = $("#input-github-token").value.trim();
+  const msgEl = $("#github-test-msg");
+  msgEl.hidden = true;
+  await withBusy($("#btn-test-github"), async () => {
+    try {
+      const res = await api("/api/settings/test-github", tokenVal ? { token: tokenVal } : {});
+      msgEl.hidden = false;
+      if (res.ok) {
+        msgEl.className = "test-msg ok small";
+        msgEl.textContent = `✓ Kết nối GitHub thành công: @${res.viewer.login} (ID: ${res.viewer.id})`;
+      } else {
+        msgEl.className = "test-msg err small";
+        msgEl.textContent = `✗ Lỗi kiểm tra: ${res.error}`;
+      }
+    } catch (err) {
+      msgEl.hidden = false;
+      msgEl.className = "test-msg err small";
+      msgEl.textContent = `✗ Lỗi: ${err.message}`;
+    }
+  });
+}
+
+async function testGeminiKey() {
+  const keyVal = $("#input-gemini-key").value.trim();
+  const modelVal = $("#select-gemini-model").value;
+  const msgEl = $("#gemini-test-msg");
+  msgEl.hidden = true;
+  await withBusy($("#btn-test-gemini"), async () => {
+    try {
+      const res = await api("/api/settings/test-gemini", {
+        apiKey: keyVal || undefined,
+        model: modelVal,
+      });
+      msgEl.hidden = false;
+      if (res.ok) {
+        msgEl.className = "test-msg ok small";
+        msgEl.textContent = `✓ Kết nối Gemini AI thành công (${modelVal})!`;
+      } else {
+        msgEl.className = "test-msg err small";
+        msgEl.textContent = `✗ Lỗi kiểm tra: ${res.error}`;
+      }
+    } catch (err) {
+      msgEl.hidden = false;
+      msgEl.className = "test-msg err small";
+      msgEl.textContent = `✗ Lỗi: ${err.message}`;
+    }
+  });
+}
+
+async function saveSettings() {
+  const repo = $("#input-repo").value.trim();
+  const githubToken = $("#input-github-token").value.trim();
+  const geminiApiKey = $("#input-gemini-key").value.trim();
+  const geminiModel = $("#select-gemini-model").value;
+  const statusMsg = $("#save-status-msg");
+
+  const patch = {};
+  if (repo) patch.repo = repo;
+  if (githubToken) patch.githubToken = githubToken;
+  if (geminiApiKey) patch.geminiApiKey = geminiApiKey;
+  if (geminiModel) patch.geminiModel = geminiModel;
+
+  await withBusy($("#btn-save-settings"), async () => {
+    try {
+      await api("/api/settings", patch);
+      $("#input-github-token").value = "";
+      $("#input-gemini-key").value = "";
+      statusMsg.className = "save-status-msg ok";
+      statusMsg.textContent = "✓ Đã lưu cài đặt!";
+      log("ok", "Đã cập nhật cài đặt hệ thống");
+      await loadSettings();
+      await syncSession();
+    } catch (err) {
+      statusMsg.className = "save-status-msg err";
+      statusMsg.textContent = `✗ Lỗi khi lưu: ${err.message}`;
+      log("fail", "Lưu cài đặt thất bại", { text: err.message });
+    }
+  });
+}
+
+async function initRepository() {
+  const confirm = await openDialog({
+    title: "Khởi tạo AI-DLC cho Repository",
+    body: h(
+      "p",
+      {},
+      "Thao tác này sẽ tạo nhãn huddle60:*, tạo nhánh huddle60-evidence và commit file policy vào default branch của repository.",
+    ),
+    okLabel: "Khởi tạo ngay",
+  });
+  if (confirm !== "ok") return;
+
+  await withBusy($("#btn-init-repo"), async () => {
+    const update = log("pending", "Đang khởi tạo Repository…");
+    try {
+      const res = await api("/api/repo/init", {});
+      update("ok", res.message || "Khởi tạo thành công!");
+      await loadSettings();
+      await syncSession();
+    } catch (err) {
+      update("fail", "Khởi tạo thất bại", { text: err.message });
+    }
+  });
+}
+
 // ---------- boot ----------
 
 function switchView(view) {
@@ -708,6 +1125,11 @@ function switchView(view) {
     tab.classList.toggle("active", tab.dataset.view === view);
   $("#view-items").hidden = view !== "items";
   $("#view-plan").hidden = view !== "plan";
+  $("#view-settings").hidden = view !== "settings";
+
+  if (view === "settings") {
+    loadSettings();
+  }
 }
 
 function fatal(message) {
@@ -716,11 +1138,142 @@ function fatal(message) {
   box.hidden = false;
 }
 
-async function boot() {
-  if (!token) {
-    fatal("Thiếu session token.\nMở đúng URL mà lệnh `huddle60 ui` in ra trong terminal.");
-    return;
+async function switchRepository(repo) {
+  try {
+    log("pending", `Đang chuyển sang repository: ${repo}...`);
+    await api("/api/settings", { repo });
+    log("ok", `Đã chuyển sang repository: ${repo}`);
+    await syncSession();
+    if (state.session?.status === "ready") {
+      await loadItems();
+    } else {
+      switchView("settings");
+      await loadSettings();
+    }
+  } catch (err) {
+    logError(`Chuyển sang ${repo} thất bại`, err);
   }
+}
+
+function renderRepoSwitcher() {
+  const select = $("#repo-switcher-select");
+  if (!select) return;
+  const session = state.session || {};
+  const currentRepoStr = session.repo ? `${session.repo.owner}/${session.repo.repo}` : "";
+  const recentRepos = session.recentRepos || (currentRepoStr ? [currentRepoStr] : []);
+
+  select.innerHTML = "";
+
+  if (!currentRepoStr) {
+    const defaultOpt = document.createElement("option");
+    defaultOpt.value = "";
+    defaultOpt.textContent = "Chưa chọn repo...";
+    defaultOpt.selected = true;
+    defaultOpt.disabled = true;
+    select.appendChild(defaultOpt);
+  }
+
+  // 1. Recent repos group
+  if (recentRepos.length > 0) {
+    const recentGroup = document.createElement("optgroup");
+    recentGroup.label = "🕒 Dự án gần đây";
+    for (const r of recentRepos) {
+      const opt = document.createElement("option");
+      opt.value = r;
+      opt.textContent = `📁 ${r}`;
+      if (r === currentRepoStr) opt.selected = true;
+      recentGroup.appendChild(opt);
+    }
+    select.appendChild(recentGroup);
+  }
+
+  // 2. All repositories from GitHub
+  if (state.loadingRepos) {
+    const loadingGroup = document.createElement("optgroup");
+    loadingGroup.label = "📂 Tất cả Repositories (GitHub)";
+    const loadingOpt = document.createElement("option");
+    loadingOpt.disabled = true;
+    loadingOpt.value = "";
+    loadingOpt.textContent = "⏳ Đang tải tất cả repos từ GitHub...";
+    loadingGroup.appendChild(loadingOpt);
+    select.appendChild(loadingGroup);
+  } else if (state.userRepos && state.userRepos.length > 0) {
+    const allGroup = document.createElement("optgroup");
+    allGroup.label = `📂 Tất cả Repositories (${state.userRepos.length})`;
+    for (const r of state.userRepos) {
+      const opt = document.createElement("option");
+      opt.value = r.fullName;
+      const icon = r.isPrivate ? "🔒" : "🌐";
+      opt.textContent = `${icon} ${r.fullName}`;
+      if (r.fullName === currentRepoStr) opt.selected = true;
+      allGroup.appendChild(opt);
+    }
+    select.appendChild(allGroup);
+  }
+
+  // 3. Action options
+  const actionGroup = document.createElement("optgroup");
+  actionGroup.label = "Thao tác";
+
+  const refreshOpt = document.createElement("option");
+  refreshOpt.value = "__refresh__";
+  refreshOpt.textContent = "🔄 Tải lại danh sách từ GitHub...";
+  actionGroup.appendChild(refreshOpt);
+
+  const addOpt = document.createElement("option");
+  addOpt.value = "__add__";
+  addOpt.textContent = "➕ Nhập repository khác...";
+  actionGroup.appendChild(addOpt);
+
+  select.appendChild(actionGroup);
+
+  if (currentRepoStr) {
+    select.value = currentRepoStr;
+  }
+}
+
+async function loadUserRepos(forceRefresh = false) {
+  if (state.loadingRepos) return;
+  state.loadingRepos = true;
+  renderRepoSwitcher();
+
+  try {
+    const query = forceRefresh ? "?refresh=true" : "";
+    const res = await api(`/api/repos${query}`);
+    state.userRepos = res.repos || [];
+
+    // Update datalist for settings input
+    const datalist = $("#repo-datalist");
+    if (datalist) {
+      datalist.innerHTML = "";
+      for (const r of state.userRepos) {
+        const opt = document.createElement("option");
+        opt.value = r.fullName;
+        if (r.description) opt.label = r.description;
+        datalist.appendChild(opt);
+      }
+    }
+  } catch (err) {
+    console.warn("Could not load user repos:", err);
+  } finally {
+    state.loadingRepos = false;
+    renderRepoSwitcher();
+  }
+}
+
+async function removeRecentRepository(repo) {
+  try {
+    const currentList = state.settings?.recentRepos || [];
+    const nextList = currentList.filter((r) => r !== repo);
+    await api("/api/settings", { recentRepos: nextList });
+    await loadSettings();
+    await syncSession();
+  } catch (err) {
+    logError(`Xóa ${repo} thất bại`, err);
+  }
+}
+
+async function syncSession() {
   try {
     state.session = await api("/api/session");
   } catch (error) {
@@ -731,30 +1284,92 @@ async function boot() {
     );
     return;
   }
+
   const { session } = state;
-  const repo = $("#repo");
-  repo.textContent = `${session.repo.owner}/${session.repo.repo}`;
-  repo.href = session.repo.url;
-  $("#viewer").textContent = `@${session.viewer.login}`;
+  const isReady = session.status === "ready";
+
+  const tenantBadge = $("#tenant-badge");
+  if (tenantBadge) {
+    if (session.tenant) {
+      tenantBadge.textContent = session.tenant;
+      tenantBadge.hidden = false;
+    } else {
+      tenantBadge.hidden = true;
+    }
+  }
+
+  // Tabs enable/disable
+  const itemsTab = document.querySelector('.tab[data-view="items"]');
+  const planTab = document.querySelector('.tab[data-view="plan"]');
+  if (itemsTab) itemsTab.disabled = !isReady;
+  if (planTab) planTab.disabled = !isReady;
+
+  // Render repo switcher dropdown with all repos
+  renderRepoSwitcher();
+
+  // If connected to GitHub and haven't fetched all repos yet, load in background
+  if (
+    (session.viewer || session.status === "ready") &&
+    !state.userRepos.length &&
+    !state.loadingRepos
+  ) {
+    loadUserRepos();
+  }
+
+  const repoGhLink = $("#repo-gh-link");
+  if (repoGhLink) {
+    if (session.repo) {
+      repoGhLink.href = session.repo.url;
+      repoGhLink.hidden = false;
+    } else {
+      repoGhLink.hidden = true;
+    }
+  }
+
+  if (session.viewer) {
+    $("#viewer").textContent = `@${session.viewer.login}`;
+  } else {
+    $("#viewer").textContent = "Chưa kết nối";
+  }
+
   $("#roles").replaceChildren(
-    ...(session.roles.length
+    ...(session.roles && session.roles.length
       ? session.roles.map((role) => h("span", { class: "badge story" }, role))
-      : [h("span", { class: "muted" }, "Chưa có vai trò")]),
+      : isReady
+        ? [h("span", { class: "muted" }, "Chưa có vai trò")]
+        : [h("span", { class: "badge warn" }, "Cần cài đặt")]),
   );
+
   const dot = $("#planner-status");
   dot.classList.toggle("on", Boolean(session.planner));
   dot.title = session.planner
     ? `planner: ${session.planner.model}`
     : "planner off (GEMINI_API_KEY)";
+
   if (!session.planner) {
     $("#plan-generate").disabled = true;
-    $("#plan-hint").textContent =
-      "Gemini chưa cấu hình: đặt GEMINI_API_KEY rồi chạy lại huddle60 ui";
+    $("#plan-hint").textContent = "Gemini chưa cấu hình: vào Cài đặt để thêm API Key";
+  } else {
+    $("#plan-generate").disabled = false;
+    $("#plan-hint").textContent = "";
   }
-  if (!hasRole("po") && !hasRole("dev")) {
-    state.filter = "all";
-    for (const chip of document.querySelectorAll("#filters .chip"))
-      chip.classList.toggle("active", chip.dataset.filter === "all");
+
+  if (!isReady) {
+    switchView("settings");
+  } else {
+    if (!hasRole("po") && !hasRole("dev")) {
+      state.filter = "all";
+      for (const chip of document.querySelectorAll("#filters .chip"))
+        chip.classList.toggle("active", chip.dataset.filter === "all");
+    }
+    await loadItems();
+  }
+}
+
+async function boot() {
+  if (!token) {
+    fatal("Thiếu session token.\nMở đúng URL mà lệnh `huddle60 ui` in ra trong terminal.");
+    return;
   }
 
   for (const chip of document.querySelectorAll("#filters .chip")) {
@@ -766,8 +1381,10 @@ async function boot() {
       renderItems();
     });
   }
+
   for (const tab of document.querySelectorAll(".tab"))
     tab.addEventListener("click", () => switchView(tab.dataset.view));
+
   $("#search").addEventListener("input", (event) => {
     state.query = event.target.value;
     renderItems();
@@ -778,8 +1395,45 @@ async function boot() {
   $("#refine-form").addEventListener("submit", refinePlan);
   $("#create-btn").addEventListener("click", createIssues);
 
-  log("ok", `Đã kết nối · @${session.viewer.login}`);
-  await loadItems();
+  // Repo switcher handler
+  $("#repo-switcher-select")?.addEventListener("change", async (event) => {
+    const value = event.target.value;
+    const current = state.session?.repo
+      ? `${state.session.repo.owner}/${state.session.repo.repo}`
+      : "";
+
+    if (value === "__refresh__") {
+      event.target.value = current;
+      await loadUserRepos(true);
+      return;
+    }
+    if (value === "__add__") {
+      switchView("settings");
+      $("#input-repo").focus();
+      event.target.value = current;
+      return;
+    }
+    if (value && value !== current) {
+      await switchRepository(value);
+    }
+  });
+
+  // Settings handlers
+  $("#btn-test-github").addEventListener("click", testGithubToken);
+  $("#btn-test-gemini").addEventListener("click", testGeminiKey);
+  $("#btn-save-settings").addEventListener("click", saveSettings);
+  $("#btn-init-repo").addEventListener("click", initRepository);
+
+  // Spec editor handlers
+  $("#spec-btn-ai-refine").addEventListener("click", handleAiRefineSpec);
+  $("#spec-btn-save").addEventListener("click", handleSaveSpecChanges);
+  $("#spec-btn-cancel").addEventListener("click", () => $("#spec-dialog").close());
+  $("#spec-modal-close-x").addEventListener("click", () => $("#spec-dialog").close());
+
+  await syncSession();
+  if (state.session?.status === "ready") {
+    log("ok", `Đã kết nối · @${state.session.viewer.login}`);
+  }
 }
 
 boot();

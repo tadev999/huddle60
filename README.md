@@ -59,6 +59,21 @@ Từ đó trở đi, mọi PR đều phải khớp đúng phiên bản yêu cầ
   - Bằng chứng kiểm toán: nhánh `huddle60-evidence`
   - Cấu hình chính sách: `.github/huddle60/policy.yml`
 
+### Triết lý AI-Native: Lát cắt dọc kiểm thử được (Vertical Testable Slices)
+
+Trong thời kỳ Agile truyền thống, các nhóm phát triển thường chia nhỏ công việc theo **tầng công nghệ nằm ngang (Horizontal Layers)**:
+- *Task 1:* Tạo nút giao diện (Frontend dev làm)
+- *Task 2:* Viết API endpoint (Backend dev làm)
+- *Task 3:* Viết migration cơ sở dữ liệu (DBA làm)
+
+Cách chia này sinh ra vì **con người bị giới hạn bởi chuyên môn hóa**. Nhưng trong kỷ nguyên của **AI Coding Agents (Cursor, Claude Code, Copilot)**:
+1. **AI là Fullstack-by-default:** Một Coding Agent có thể cùng lúc sửa DB, viết API, hoàn thiện UI và viết bài kiểm thử trong **duy nhất 1 Pull Request**.
+2. **Không gãy ngữ cảnh (Zero Context Fragmentation):** Việc tách riêng task UI và API khiến Agent làm UI phải tạo dữ liệu giả lập (mock), còn Agent làm API không biết UI render thế nào. Hậu quả là không có PR nào có thể chạy thử nghiệm độc lập được.
+3. **Đầu vào là Yêu cầu → Đầu ra là Tính năng kiểm thử được (Testable Feature Slice):**
+   - Mỗi Issue trong `huddle60` là một **lát cắt dọc hoàn chỉnh** từ giao diện đến dữ liệu.
+   - Đi kèm các tiêu chí nghiệm thu **Given / When / Then** định lượng rõ ràng.
+   - AI Agent khi nhận Issue bắt buộc phải code kèm bài test tự động (Automated Test) chứng minh toàn bộ tiêu chí đều pass trước khi tạo PR.
+
 Đặc tả đầy đủ: [tài liệu kỹ thuật](docs/technical-implementation.md).
 
 > Thấy hữu ích? Hãy **star** repo và thử trên một repo thử nghiệm. Dự án đang alpha và cần người chạy thật nhất.
@@ -67,28 +82,30 @@ Từ đó trở đi, mọi PR đều phải khớp đúng phiên bản yêu cầ
 
 | | Hôm nay | Với huddle60 |
 |---|---|---|
-| **PO** | Ngồi viết từng ticket, AC, chia việc | Gõ _“Lập trình login sử dụng Google OAuth”_ → AI soạn cả cây công việc kèm AC. PO chỉ trả lời câu hỏi và xác nhận |
+| **PO** | Ngồi viết từng ticket, AC, chia việc | Gõ _“Lập trình login sử dụng Google OAuth”_ → AI soạn các lát cắt tính năng kèm AC. PO chỉ trả lời câu hỏi và xác nhận |
 | **PO** | Không chắc DEV/AI đang làm theo phiên bản yêu cầu nào | Mỗi PR gắn baseline có hash; sửa yêu cầu sau khi chốt thì PR **tự bị chặn** |
 | **DEV** | Ticket mơ hồ, hỏi đi hỏi lại | Nhận Story có AC rõ ràng; câu hỏi chặn đã được PO trả lời **trước** khi Issue được tạo |
-| **DEV** | Copy yêu cầu vào agent bằng tay, dễ sót | `huddle60 context --issue 15` đưa đúng baseline vào agent trong IDE của bạn |
+| **DEV** | Copy yêu cầu vào agent bằng tay, dễ sót | `huddle60 context --issue 15` đưa đúng baseline vào agent trong IDE của bạn kèm yêu cầu test |
 | **Cả team** | Merge xong vẫn không rõ “xong chưa” | Done chỉ khi PO nghiệm thu đúng build trên `main`; mọi quyết định truy vết được |
 
 ### PO thấy gì sau 30 giây?
 
-Chạy `huddle60 ui`, gõ yêu cầu vào tab **new plan**, bấm **generate plan** (rút gọn):
+Chạy `huddle60 ui`, gõ yêu cầu vào tab **Lập kế hoạch**, bấm **Tạo kế hoạch** (rút gọn):
 
 > ## Kế hoạch đề xuất (revision 1)
 > Đăng nhập bằng Google OAuth cho ứng dụng web.
 >
 > - **Epic** `epic-auth`: Xác thực người dùng bằng Google OAuth
->   - **Story** `story-login`: Đăng nhập bằng tài khoản Google
->     - AC-01: Given tài khoản Google hợp lệ When đăng nhập Then vào trang chính
->     - AC-02: Given người dùng hủy cấp quyền When đăng nhập Then thấy thông báo lỗi phù hợp
->     - **Task** `task-oauth-setup`: Cấu hình Google OAuth Client
->     - **Task** `task-login-ui`: Giao diện đăng nhập _(blocked by task-oauth-setup)_
->   - **Story** `story-logout`: Đăng xuất
+>   - **Story** `google-login-flow`: Đăng nhập thành công lần đầu và tạo hồ sơ người dùng
+>     - AC-01: Given người dùng ở trang login When bấm 'Sign in with Google' Then chuyển hướng sang Google OAuth
+>     - AC-02: Given cấp quyền hợp lệ When callback hoàn tất Then tạo phiên đăng nhập và chuyển về dashboard
+>     - AC-03: Given người dùng lần đầu đăng nhập Then tạo bản ghi user mới từ email và tên Google
+>     - **Verification**: Kèm bài test E2E/Integration kiểm tra toàn bộ luồng từ UI đến DB
+>   - **Story** `google-login-error`: Xử lý khi hủy cấp quyền hoặc token hết hạn
+>     - AC-04: Given người dùng hủy cấp quyền When quay lại Then hiển thị thông báo lỗi phù hợp và không tạo phiên
+>   - **Story** `story-logout`: Đăng xuất và hủy phiên
 >
-> **Câu hỏi khác:** Có cần lưu session vào cookie không?
+> **Câu hỏi chặn:** Nếu email Google trùng với tài khoản mật khẩu cũ thì tự động liên kết hay yêu cầu xác nhận mật khẩu?
 
 PO bấm **create 5 issues** → Issues được tạo, liên kết cha–con và nằm sẵn trên Project board. Chưa đồng ý → gõ một dòng
 vào ô **refine**, AI soạn lại. Có câu hỏi chặn thì nút tạo bị khóa đến khi PO trả lời.
@@ -199,6 +216,59 @@ src/entry/       action, cli
 templates/       Tệp cho repository áp dụng: Issue forms, policy, workflow, PR template, AGENTS.md
 tests/           Unit + kịch bản đầu-cuối với FakeGitHub/FakeModel
 ```
+
+## Huddle60 dành cho Startup & Doanh nghiệp vừa và nhỏ
+
+### 1. Tại sao Huddle60 sinh ra là dành cho Startup?
+- **Nỗi đau lớn nhất của Startup hiện nay:**
+  - Founder/PO thường có ý tưởng rất nhanh nhưng **không có thời gian viết tài liệu (PRD) chi tiết**, thường chỉ nhắn vài dòng trên Slack/Zalo.
+  - DEV (hoặc AI coding tools như Cursor, Claude Code, Windsurf) khi nhận yêu cầu sơ sài sẽ **code sai hướng hoặc sinh ra code không có test**.
+  - Startup **ghét sự cồng kềnh của Jira** (quá nặng nề, tốn phí, cấu hình phức tạp), nhưng lại thiếu một quy trình kiểm soát chất lượng chuẩn chỉnh (AI-DLC).
+- **Lợi thế cạnh tranh của Huddle60:** Biến 1 câu chat của Founder thành **kế hoạch kiểm thử được (Vertical Slice)** trong 60 giây và quản lý tất cả trực tiếp trên **GitHub** mà không tốn thêm 1 xu tiền database hay máy chủ lưu trữ trung gian (Zero-Infra).
+
+### 2. Mô hình sản phẩm tối ưu cho Startup (Sản phẩm trông như thế nào?)
+Founder/PO thường không thích gõ lệnh terminal phức tạp. Họ cần một giao diện Web trực quan để xem và bấm duyệt. Vì vậy, Huddle60 được thiết kế tối ưu cho cả hai đối tượng:
+
+```text
+┌────────────────────────────────────────────────────────────────────────┐
+│             HUDDLE60 DÀNH CHO STARTUP & DOANH NGHIỆP NHỎ               │
+├────────────────────────────────────────────────────────────────────────┤
+│                                                                        │
+│   Founder / PO (Non-tech) ──┐                                         │
+│                             ├─► [ Huddle60 Web Portal ] ◄── GitHub API │
+│   Lead DEV / AI Engineer ───┘   (Dùng chung trong team)                │
+│                                           │                            │
+│                                           ▼                            │
+│                              [ CÁC REPO CỦA STARTUP ]                  │
+│                              ├── 1. backend-api                        │
+│                              ├── 2. web-app (Next.js)                  │
+│                              ├── 3. mobile-app (Flutter)               │
+│                              └── 4. landing-page                       │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+- **Quản lý Đa Repository (Project Switcher):** Một startup điển hình luôn có từ 2 đến 5 repo (`backend`, `web`, `mobile`). Bộ Project Switcher ở góc trên bên trái cho phép Founder/DEV chuyển đổi tức thì giữa các repo chỉ với 1 click.
+- **Triển khai đội ngũ bằng Docker (1-Click Run):** Chạy Huddle60 cho cả team Founder & DEV bằng Docker Compose mà không cần cài đặt hạ tầng phức tạp:
+  ```bash
+  # Khởi chạy container với dữ liệu cấu hình được lưu bền vững
+  docker compose up -d
+  ```
+  Truy cập: `http://localhost:4317` để cấu hình GitHub PAT và Gemini API Key một lần duy nhất cho cả team.
+
+### 3. Bộ tính năng "Sát thủ" (Killer Features) thu hút Startup
+
+| Tính năng | Giải quyết bài toán gì cho Startup? |
+| :--- | :--- |
+| **"Idea to Spec in 60s"** | Founder chỉ cần gõ: *"Làm tính năng mua gói VIP qua MoMo, có tự gia hạn mỗi tháng"*. Gemini tự sinh trọn bộ Epic $\rightarrow$ Story $\rightarrow$ Task với Given/When/Then đầy đủ. |
+| **"Export Context cho Cursor / Claude Code"** | Nút **"Context"** trên từng task: DEV bấm 1 phát copy toàn bộ AC & quy chuẩn để dán thẳng vào Cursor / Claude Code / Copilot cho AI sinh code chuẩn 100%. |
+| **"Zero-Jira, All-in-GitHub"** | Bỏ Jira cồng kềnh, tiết kiệm chi phí; toàn bộ việc lên kế hoạch, duyệt bài, quản lý tiến độ và code nằm trọn vẹn trong GitHub Issues/Projects. |
+| **"Bảo vệ Founder trước việc AI code ẩu"** | AI code xong phải có test pass trên GitHub Actions thì nút **Accept (Nghiệm thu)** của Founder mới sáng lên. Founder không sợ DEV hay AI báo xong mà sản phẩm lỗi tùm lum. |
+
+### 4. Nền tảng SaaS Đa Doanh nghiệp (`*.huddle60.app`)
+Huddle60 hỗ trợ kiến trúc SaaS Multi-tenant sẵn sàng phục vụ hàng ngàn công ty:
+- **Tên miền công ty riêng biệt:** Mỗi tổ chức truy cập qua subdomain riêng (ví dụ: `congtyA.huddle60.app` hoặc `congtyA.localhost:4317`). Cấu hình và kho lưu trữ của từng công ty được phân tách cô lập tuyệt đối (`~/.config/huddle60/tenants/<slug>.json`).
+- **Landing Page & Bộ tạo Workspace:** Truy cập trang chủ `huddle60.app` (hoặc `localhost:4317/landing`) để tạo không gian làm việc cho công ty trong 5 giây.
+- **Đăng nhập 1-Click với GitHub OAuth:** Thiết lập biến môi trường `GITHUB_CLIENT_ID` và `GITHUB_CLIENT_SECRET` để cho phép PO & DEV đăng nhập trực tiếp qua GitHub mà không cần copy/paste token thủ công.
 
 ## Cài đặt vào một repository
 

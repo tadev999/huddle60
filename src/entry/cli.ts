@@ -35,7 +35,7 @@ import { WorkflowService } from "../workflow/service.js";
 const USAGE = `Usage: huddle60 <command> [options]
 
 Commands:
-  ui [--port 4317] [--no-open]    Open the local app for PO and DEV (plans, approvals, context)
+  ui [--host 127.0.0.1] [--port 4317] [--no-open]   Open the web app for PO and DEV (plans, approvals, context)
   init                            Create AI-DLC labels and the evidence branch (once per repository)
   context --issue <n> [--draft]   Print the approved baseline of an Issue for a coding agent
   init-evidence                   Create only the protected evidence branch
@@ -56,6 +56,7 @@ function detectRepo(explicit: string | undefined): [string, string] {
     try {
       const remote = execFileSync("git", ["remote", "get-url", "origin"], {
         encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
       }).trim();
       value = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/u.exec(remote)?.[1];
     } catch {
@@ -237,12 +238,22 @@ async function init(repoArg: string | undefined): Promise<string> {
   return lines.join("\n");
 }
 
-async function ui(repoArg: string | undefined, portArg: string | undefined, open: boolean) {
-  const [owner, repo] = detectRepo(repoArg);
+async function ui(
+  repoArg: string | undefined,
+  portArg: string | undefined,
+  hostArg: string | undefined,
+  open: boolean,
+) {
+  let owner: string | undefined;
+  let repo: string | undefined;
+  if (repoArg) {
+    [owner, repo] = detectRepo(repoArg);
+  }
   const port = Number(portArg ?? process.env.AI_DLC_PORT ?? 4317);
   if (!Number.isInteger(port) || port < 1024 || port > 65_535)
     throw new Error("--port must be between 1024 and 65535.");
-  await startLocalApp({ owner, repo, port, open });
+  const host = hostArg ?? process.env.HOST ?? "127.0.0.1";
+  await startLocalApp({ owner, repo, host, port, open });
 }
 
 async function validatePolicy(file: string | undefined): Promise<string> {
@@ -257,7 +268,7 @@ async function planPreview(request: string | undefined): Promise<string> {
   if (!apiKey) throw new Error("Set GEMINI_API_KEY to call Gemini.");
   const model = new GeminiModel({
     apiKey,
-    model: process.env.AI_DLC_MODEL ?? "gemini-2.5-flash",
+    model: process.env.AI_DLC_MODEL ?? "gemini-3.8-flash",
     timeoutMs: 120_000,
     maxRetries: 1,
   });
@@ -301,6 +312,7 @@ async function main(): Promise<void> {
       repo: { type: "string" },
       issue: { type: "string" },
       draft: { type: "boolean", default: false },
+      host: { type: "string" },
       port: { type: "string" },
       "no-open": { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
@@ -314,7 +326,7 @@ async function main(): Promise<void> {
   let output: string;
   switch (command) {
     case "ui":
-      await ui(values.repo, values.port, !values["no-open"]);
+      await ui(values.repo, values.port, values.host, !values["no-open"]);
       return;
     case "init":
       output = await init(values.repo);

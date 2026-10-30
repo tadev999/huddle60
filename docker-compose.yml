@@ -1,0 +1,18 @@
+services:
+  huddle60:
+    build: .
+    container_name: huddle60
+    restart: unless-stopped
+    ports:
+      - "4317:4317"
+    environment:
+      - HOST=0.0.0.0
+      - ALLOWED_HOSTS=*
+      - HUDDLE60_SESSION_TOKEN=${HUDDLE60_SESSION_TOKEN:-startup-team-token}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+    volumes:
+      - huddle60_data:/app/data
+
+volumes:
+  huddle60_data:

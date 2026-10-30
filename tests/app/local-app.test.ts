@@ -199,5 +199,42 @@ describe("LocalApp", () => {
       });
       expect(github.commentsOn(story.number)).toHaveLength(0);
     });
+
+    it("allows dev/po to get issue details, update issue spec, and leave a comment", async () => {
+      const story = github.addIssue({
+        title: "[Story] Login",
+        body: storyBody(),
+        labels: [LABELS.story],
+      });
+      const details = await app.getIssueDetails(story.number);
+      expect(details).toMatchObject({
+        number: story.number,
+        title: "[Story] Login",
+        canEdit: true,
+      });
+
+      // Update as DEV
+      github.viewerActor = DEV;
+      const asDev = new LocalApp({
+        github,
+        evidence,
+        model,
+        clock: fixedClock,
+        logger: silentLogger,
+      });
+
+      await asDev.updateIssueDetails(story.number, {
+        title: "[Story] Login with OAuth2",
+        body: "### Goal\nSupport OAuth2 login",
+        comment: "DEV updated scope to include Google OAuth",
+      });
+
+      const updated = await github.getIssue(story.number);
+      expect(updated.title).toBe("[Story] Login with OAuth2");
+      expect(updated.body).toBe("### Goal\nSupport OAuth2 login");
+
+      const comments = github.commentsOn(story.number);
+      expect(comments.some((c) => c.body.includes("Google OAuth"))).toBe(true);
+    });
   });
 });

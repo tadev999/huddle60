@@ -165,6 +165,19 @@ export class OctokitGitHub implements LocalGitHubPort {
     return toIssue(data as RawIssue);
   }
 
+  async updateIssue(
+    issueNumber: number,
+    patch: { title?: string; body?: string },
+  ): Promise<IssueData> {
+    const { data } = await this.octokit.rest.issues.update({
+      ...this.base,
+      issue_number: issueNumber,
+      ...(patch.title !== undefined ? { title: patch.title } : {}),
+      ...(patch.body !== undefined ? { body: patch.body } : {}),
+    });
+    return toIssue(data as RawIssue);
+  }
+
   async listIssuesWithLabel(label: string): Promise<IssueData[]> {
     const items = await this.octokit.paginate(this.octokit.rest.issues.listForRepo, {
       ...this.base,

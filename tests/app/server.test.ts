@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MemoryEvidenceStore, silentLogger } from "../../src/adapters/memory.js";
 import { LocalApp } from "../../src/app/local-app.js";
-import { createAppHandler } from "../../src/app/server.js";
+import { createAppHandler, extractSubdomain } from "../../src/app/server.js";
 import { LABELS } from "../../src/core/vocabulary.js";
 import { FakeGitHub, FakeModel, PO, fixedClock } from "../helpers/fakes.js";
 import { storyBody } from "../helpers/fixtures.js";
@@ -117,5 +117,77 @@ describe("local app server", () => {
     });
     expect(domain.status).toBe(422);
     expect(JSON.parse(domain.body).error.code).toBe("E_ROLE");
+  });
+
+  it("supports GET /api/issues/:number and PATCH /api/issues/:number", async () => {
+    const json = { ...auth, "content-type": "application/json" };
+    const getRes = await call("/api/issues/1", { headers: auth });
+    expect(getRes.status).toBe(200);
+    expect(JSON.parse(getRes.body)).toMatchObject({
+      number: 1,
+      title: "[Story] Login",
+      canEdit: true,
+    });
+
+    const patchRes = await call("/api/issues/1", {
+      method: "PATCH",
+      headers: json,
+      body: JSON.stringify({
+        title: "[Story] Login updated",
+        comment: "Note from user",
+      }),
+    });
+    expect(patchRes.status).toBe(200);
+    const patched = JSON.parse(patchRes.body);
+    expect(patched.title).toBe("[Story] Login updated");
+  });
+
+  it("extracts subdomains for multi-tenant routing", () => {
+    expect(extractSubdomain("congtya.huddle60.app")).toBe("congtya");
+    expect(extractSubdomain("congtyb.localhost:4317")).toBe("congtyb");
+    expect(extractSubdomain("huddle60.app")).toBeNull();
+    expect(extractSubdomain("www.huddle60.app")).toBeNull();
+    expect(extractSubdomain("localhost:4317")).toBeNull();
+    expect(extractSubdomain("127.0.0.1:4317")).toBeNull();
+  });
+
+  it("reports auth status via /api/auth/status", async () => {
+    const res = await call("/api/auth/status", { headers: auth });
+    expect(res.status).toBe(200);
+    const data = JSON.parse(res.body);
+    expect(typeof data.oauthEnabled).toBe("boolean");
+  });
+
+  it("serves landing page on root and index on subdomain, injecting session token and cookie", async () => {
+    // Root domain -> landing page
+    const rootRes = await call("/", { headers: { host: `localhost:${port}` } });
+    expect(rootRes.status).toBe(200);
+    expect(rootRes.body).toContain("AI-DLC Platform for Startups");
+    expect(rootRes.body).toContain(`<meta name="huddle60-session-token" content="${TOKEN}" />`);
+    expect(rootRes.headers["set-cookie"]).toBeDefined();
+
+    // Subdomain -> app index page
+    const subRes = await call("/", { headers: { host: `congtya.localhost:${port}` } });
+    expect(subRes.status).toBe(200);
+    expect(subRes.body).toContain("<title>huddle60</title>");
+    expect(subRes.body).toContain(`<meta name="huddle60-session-token" content="${TOKEN}" />`);
+  });
+
+  it("authenticates via cookie when x-ai-dlc-token header is omitted", async () => {
+    const res = await call("/api/session", {
+      headers: {
+        cookie: `huddle60_token=${TOKEN}`,
+      },
+    });
+    expect(res.status).toBe(200);
+    const data = JSON.parse(res.body);
+    expect(data.repo.owner).toBe("acme");
+  });
+
+  it("lists repos via GET /api/repos", async () => {
+    const res = await call("/api/repos", { headers: auth });
+    expect(res.status).toBe(200);
+    const data = JSON.parse(res.body);
+    expect(Array.isArray(data.repos)).toBe(true);
   });
 });

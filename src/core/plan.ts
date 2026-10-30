@@ -31,7 +31,7 @@ export const ModelPlanSchema = z.object({
   summary: Text(1000),
   assumptions: z.array(Text(300)).max(15),
   openQuestions: z.array(z.object({ text: Text(300), blocking: z.boolean() })).max(15),
-  nodes: z.array(NodeSchema).min(1).max(200),
+  nodes: z.array(NodeSchema).min(1),
 });
 
 export type ModelPlan = z.infer<typeof ModelPlanSchema>;

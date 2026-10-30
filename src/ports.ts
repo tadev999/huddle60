@@ -60,6 +60,7 @@ export interface GitHubPort {
   getIssue(number: number): Promise<IssueData>;
   getComment(id: number): Promise<CommentData | null>;
   createIssue(input: { title: string; body: string; labels: string[] }): Promise<IssueData>;
+  updateIssue(issueNumber: number, patch: { title?: string; body?: string }): Promise<IssueData>;
   listIssuesWithLabel(label: string): Promise<IssueData[]>;
   addLabels(issueNumber: number, labels: string[]): Promise<void>;
   removeLabel(issueNumber: number, label: string): Promise<void>;

@@ -1,6 +1,6 @@
 {
   "name": "huddle60",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "huddle60: a 60-second huddle between PO, DEV and AI on GitHub. Gemini planning, hash-locked requirements and PR gates (AI-DLC).",
   "type": "module",
   "engines": {
@@ -34,6 +34,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@rolldown/binding-darwin-arm64": "^1.2.16",
     "@types/node": "^22.20.5",
     "esbuild": "^0.28.2",
     "prettier": "^3.9.10",
