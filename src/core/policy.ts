@@ -2,10 +2,18 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { AiDlcError } from "./errors.js";
 
-const Member = z.object({
+export const MemberSchema = z.object({
   id: z.number().int().positive(),
   login: z.string().min(1),
 });
+export type PolicyMember = z.infer<typeof MemberSchema>;
+
+export const RolesSchema = z.object({
+  po: z.array(MemberSchema).min(1),
+  dev: z.array(MemberSchema).default([]),
+  maintainer: z.array(MemberSchema).default([]),
+});
+export type PolicyRoles = z.infer<typeof RolesSchema>;
 
 const Lane = z.object({
   requires_po_approval: z.boolean(),
@@ -14,11 +22,7 @@ const Lane = z.object({
 export const PolicySchema = z
   .object({
     version: z.literal(1),
-    roles: z.object({
-      po: z.array(Member).min(1),
-      dev: z.array(Member).default([]),
-      maintainer: z.array(Member).default([]),
-    }),
+    roles: RolesSchema,
     project: z
       .object({
         owner: z.string().min(1),

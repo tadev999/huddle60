@@ -184,10 +184,80 @@ describe("local app server", () => {
     expect(data.repo.owner).toBe("acme");
   });
 
-  it("lists repos via GET /api/repos", async () => {
+  it("serves the app index page on clean SPA repo routes", async () => {
+    const res = await call("/skill_bento", { headers: { host: `tadev999.localhost:${port}` } });
+    expect(res.status).toBe(200);
+    expect(res.body).toContain("<title>huddle60</title>");
+    expect(res.body).toContain(`<meta name="huddle60-session-token" content="${TOKEN}" />`);
+
+    const fullPathRes = await call("/tadev999/skill_bento", {
+      headers: { host: `localhost:${port}` },
+    });
+    expect(fullPathRes.status).toBe(200);
+    expect(fullPathRes.body).toContain("<title>huddle60</title>");
+  });
+
+  it("sets long-lived public cache headers for static assets and no-store for html", async () => {
+    const cssRes = await call("/styles.css");
+    expect(cssRes.status).toBe(200);
+    expect(cssRes.headers["cache-control"]).toContain("public, max-age=86400");
+
+    const jsRes = await call("/app.js");
+    expect(jsRes.status).toBe(200);
+    expect(jsRes.headers["cache-control"]).toContain("public, max-age=86400");
+
+    const htmlRes = await call("/");
+    expect(htmlRes.status).toBe(200);
+    expect(htmlRes.headers["cache-control"]).toBe("no-store");
+  });
+
+  it("caches items in-memory for GET /api/items and supports ?refresh=1", async () => {
+    const res1 = await call("/api/items", { headers: auth });
+    expect(res1.status).toBe(200);
+    const items1 = JSON.parse(res1.body);
+    expect(Array.isArray(items1)).toBe(true);
+
+    // Call again, served from cache
+    const res2 = await call("/api/items", { headers: auth });
+    expect(res2.status).toBe(200);
+
+    // Call with force refresh
+    const res3 = await call("/api/items?refresh=1", { headers: auth });
+    expect(res3.status).toBe(200);
+  });
+
+  it("lists repos via GET /api/repos and handles tenant domains, headers, and paths", async () => {
     const res = await call("/api/repos", { headers: auth });
     expect(res.status).toBe(200);
     const data = JSON.parse(res.body);
     expect(Array.isArray(data.repos)).toBe(true);
+
+    // 1. Subdomain tenant
+    const tenantRes = await call("/api/repos", {
+      headers: { ...auth, host: `tochucA.localhost:${port}` },
+    });
+    expect(tenantRes.status).toBe(200);
+    const tenantData = JSON.parse(tenantRes.body);
+    expect(Array.isArray(tenantData.repos)).toBe(true);
+
+    // 2. Header tenant
+    const headerRes = await call("/api/repos", {
+      headers: { ...auth, "x-huddle60-tenant": "tochucA" },
+    });
+    expect(headerRes.status).toBe(200);
+    const headerData = JSON.parse(headerRes.body);
+    expect(Array.isArray(headerData.repos)).toBe(true);
+
+    // 3. Path-based tenant serving index.html with meta tag & cookie
+    const pathHtmlRes = await call("/tochucA");
+    expect(pathHtmlRes.status).toBe(200);
+    expect(pathHtmlRes.body).toContain('<meta name="huddle60-tenant" content="tochucA" />');
+  }, 15_000);
+
+  it("handles /api/policy/roles endpoint", async () => {
+    const res = await call("/api/policy/roles", { headers: auth });
+    expect(res.status).toBe(200);
+    const data = JSON.parse(res.body);
+    expect(data).toHaveProperty("canEdit");
   });
 });

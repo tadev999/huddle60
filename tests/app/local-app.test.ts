@@ -81,6 +81,49 @@ describe("LocalApp", () => {
       expect(await github.listIssuesWithLabel(LABELS.fromPlan)).toHaveLength(5);
     });
 
+    it("passes reference links and document attachments to model and preserves them in issue technicalRefs", async () => {
+      model.respondWith(loginPlan());
+      const links = [
+        "https://www.figma.com/design/test-file/login-flow",
+        "https://docs.google.com/document/d/spec-123/edit",
+      ];
+      const attachments = [
+        { name: "mockup.png", mimeType: "image/png", dataBase64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" },
+        { name: "bang-gia.csv", mimeType: "text/csv", dataBase64: Buffer.from("loai,gia\nvip,100").toString("base64") },
+      ];
+
+      const draft = await app.draftPlan({
+        title: "Thiết kế màn hình Onboarding",
+        request: "Tạo màn hình Onboarding theo đúng tài liệu và mockup đính kèm",
+        links,
+        attachments,
+      });
+
+      // Verify prompt and attachments sent to model
+      expect(model.calls[0]?.user).toContain("<reference_links>");
+      expect(model.calls[0]?.user).toContain(links[0]!);
+      expect(model.calls[0]?.user).toContain(links[1]!);
+      expect(model.calls[0]?.user).toContain("The PO attached visual mockups, PDF documents, or data sheets");
+      expect(model.calls[0]?.attachments).toEqual(attachments);
+
+      // Create plan issues
+      const created = await app.createPlan(draft.draftId);
+      const requestIssue = await github.getIssue(created.created?.requestIssue ?? 0);
+      expect(requestIssue.body).toContain("### Tham chiếu kỹ thuật");
+      expect(requestIssue.body).toContain(links[0]!);
+      expect(requestIssue.body).toContain(links[1]!);
+      expect(requestIssue.body).toContain("`mockup.png` (Hình ảnh)");
+      expect(requestIssue.body).toContain("`bang-gia.csv` (Bảng tính CSV)");
+
+      // Verify child issues inherit technical references
+      const firstChildNumber = Object.values(created.created?.issues ?? {})[0];
+      expect(firstChildNumber).toBeDefined();
+      const childIssue = await github.getIssue(firstChildNumber!);
+      expect(childIssue.body).toContain("### Tham chiếu kỹ thuật");
+      expect(childIssue.body).toContain(links[0]!);
+      expect(childIssue.body).toContain("`mockup.png`");
+    });
+
     it("only lets a PO create Issues and needs a Gemini key to plan", async () => {
       github.viewerActor = DEV;
       const devApp = new LocalApp({
@@ -235,6 +278,37 @@ describe("LocalApp", () => {
 
       const comments = github.commentsOn(story.number);
       expect(comments.some((c) => c.body.includes("Google OAuth"))).toBe(true);
+    });
+
+    it("allows guests to read items and view details but blocks decisions", async () => {
+      const story = await github.createIssue({
+        title: "[Story] Public Feature",
+        body: storyBody(),
+        labels: [LABELS.story],
+      });
+      github.viewerActor = { id: 0, login: "guest", type: "User" };
+      const guestApp = new LocalApp({
+        github,
+        evidence,
+        model,
+        clock: fixedClock,
+        logger: silentLogger,
+      });
+
+      const session = await guestApp.session();
+      expect(session.roles).toEqual([]);
+      expect(session.viewer.login).toBe("guest");
+
+      const items = await guestApp.listItems();
+      expect(items.some((i) => i.number === story.number)).toBe(true);
+
+      const details = await guestApp.getIssueDetails(story.number);
+      expect(details.title).toBe("[Story] Public Feature");
+      expect(details.canEdit).toBe(false);
+
+      await expect(guestApp.decide(story.number, { action: "approve" })).rejects.toThrow(
+        /requires the po role/i,
+      );
     });
   });
 });

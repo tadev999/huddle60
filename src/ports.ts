@@ -92,6 +92,7 @@ export interface LocalGitHubPort extends GitHubPort {
     branch: string,
     limit: number,
   ): Promise<WorkflowRunData[]>;
+  getCodebaseContext?(): Promise<string>;
   ensureLabel(label: {
     name: string;
     color: string;
@@ -112,12 +113,20 @@ export interface ModelUsage {
   outputTokens: number;
 }
 
+export interface AttachmentPart {
+  name?: string;
+  mimeType: string;
+  dataBase64: string;
+}
+
 export interface ModelPort {
   readonly modelId: string;
   generateJson(input: {
     system: string;
     user: string;
     jsonSchema: Record<string, unknown>;
+    images?: Array<{ mimeType: string; dataBase64: string }>;
+    attachments?: AttachmentPart[];
   }): Promise<{ text: string; usage: ModelUsage }>;
 }
 

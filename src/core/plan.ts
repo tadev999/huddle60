@@ -195,6 +195,7 @@ export interface PlanRecord {
   requestedBy: number;
   createdAt: string;
   expiresAt: string;
+  technicalRefs?: string;
 }
 
 export function computePlanHash(requestDigest: string, plan: ModelPlan): string {

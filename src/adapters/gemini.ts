@@ -1,7 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { ApiError, GoogleGenAI } from "@google/genai";
 import { AiDlcError } from "../core/errors.js";
-import type { ModelPort, ModelUsage } from "../ports.js";
+import type { AttachmentPart, ModelPort, ModelUsage } from "../ports.js";
 
 export interface GeminiOptions {
   apiKey: string;
@@ -27,12 +27,51 @@ export class GeminiModel implements ModelPort {
     system: string;
     user: string;
     jsonSchema: Record<string, unknown>;
+    images?: Array<{ mimeType: string; dataBase64: string }>;
+    attachments?: AttachmentPart[];
   }): Promise<{ text: string; usage: ModelUsage }> {
+    const rawAttachments: AttachmentPart[] = [
+      ...(input.attachments ?? []),
+      ...(input.images ?? []).map((img) => ({
+        mimeType: img.mimeType,
+        dataBase64: img.dataBase64,
+      })),
+    ];
+
     for (let attempt = 0; ; attempt += 1) {
       try {
+        let contents: unknown = input.user;
+        if (rawAttachments.length > 0) {
+          const parts: Array<Record<string, unknown>> = [{ text: input.user }];
+          for (const att of rawAttachments) {
+            const isText =
+              att.mimeType.startsWith("text/") ||
+              att.mimeType === "application/json" ||
+              att.mimeType.includes("csv");
+            if (isText) {
+              try {
+                const textContent = Buffer.from(att.dataBase64, "base64").toString("utf8");
+                parts.push({
+                  text: `\n<attached_file name="${att.name || "document"}">\n${textContent}\n</attached_file>`,
+                });
+                continue;
+              } catch {
+                // Fallback to inlineData if decode fails
+              }
+            }
+            parts.push({
+              inlineData: {
+                mimeType: att.mimeType,
+                data: att.dataBase64,
+              },
+            });
+          }
+          contents = [{ role: "user", parts }];
+        }
+
         const response = await this.client.models.generateContent({
           model: this.options.model,
-          contents: input.user,
+          contents: contents as any,
           config: {
             systemInstruction: input.system,
             responseMimeType: "application/json",

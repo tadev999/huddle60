@@ -10,7 +10,9 @@
 
   if (isLocal) {
     const port = window.location.port ? `:${window.location.port}` : "";
-    suffixLabel.textContent = `.localhost${port}`;
+    suffixLabel.textContent = ` (cục bộ)`;
+    const prefixEl = document.querySelector(".workspace-prefix");
+    if (prefixEl) prefixEl.textContent = "/";
   } else {
     // E.g. huddle60.app
     const parts = host.split(".");
@@ -40,8 +42,7 @@
 
     let targetUrl;
     if (isLocal) {
-      const port = window.location.port ? `:${window.location.port}` : "";
-      targetUrl = `${protocol}//${slug}.localhost${port}/`;
+      targetUrl = `/${slug}/`;
     } else {
       const parts = host.split(".");
       const rootDomain = parts.slice(-2).join(".");
@@ -55,4 +56,14 @@
 
     window.location.href = targetUrl;
   });
+
+  // Ensure direct app links preserve token if available
+  const initialToken = resolveToken();
+  if (initialToken) {
+    sessionStorage.setItem("huddle60_session_token", initialToken);
+    sessionStorage.setItem("ai-dlc-token", initialToken);
+    document.querySelectorAll('a[href="/app"]').forEach((a) => {
+      a.href = `/app#token=${initialToken}`;
+    });
+  }
 })();

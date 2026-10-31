@@ -6,10 +6,12 @@ import { join } from "node:path";
 
 export interface Huddle60Config {
   githubToken?: string;
+  githubDisconnected?: boolean;
   repo?: string; // "owner/repo"
   recentRepos?: string[]; // list of repositories
   geminiApiKey?: string;
   geminiModel?: string;
+  sessionToken?: string;
 }
 
 export function getConfigDir(): string {
@@ -28,7 +30,13 @@ export function readConfigSync(tenant?: string): Huddle60Config {
   const filePath = getConfigPath(tenant);
   try {
     if (!existsSync(filePath)) {
-      if (tenant) return readConfigSync();
+      if (tenant) {
+        const global = readConfigSync();
+        return {
+          geminiApiKey: global.geminiApiKey,
+          geminiModel: global.geminiModel,
+        };
+      }
       return {};
     }
     const content = readFileSync(filePath, "utf8");
@@ -51,7 +59,13 @@ export async function readConfig(tenant?: string): Promise<Huddle60Config> {
   const filePath = getConfigPath(tenant);
   try {
     if (!existsSync(filePath)) {
-      if (tenant) return await readConfig();
+      if (tenant) {
+        const global = await readConfig();
+        return {
+          geminiApiKey: global.geminiApiKey,
+          geminiModel: global.geminiModel,
+        };
+      }
       return {};
     }
     const content = await readFile(filePath, "utf8");
@@ -93,6 +107,20 @@ export async function writeConfig(
         next.recentRepos = Array.from(
           new Set(value.filter((r): r is string => typeof r === "string" && r.trim().length > 0)),
         ).slice(0, 20);
+      }
+    } else if (key === "githubDisconnected") {
+      if (Boolean(value)) {
+        next.githubDisconnected = true;
+      } else {
+        delete next.githubDisconnected;
+      }
+    } else if (key === "githubToken") {
+      if (typeof value === "string" && value.trim().length > 0) {
+        next.githubToken = value.trim();
+        delete next.githubDisconnected;
+      } else {
+        delete next.githubToken;
+        next.githubDisconnected = true;
       }
     } else if (typeof value === "string") {
       if (value.trim() === "") {

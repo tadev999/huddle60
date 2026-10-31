@@ -1,5 +1,6 @@
 import type {
   Actor,
+  AttachmentPart,
   CommentData,
   CommitState,
   IssueData,
@@ -242,6 +243,10 @@ export class FakeGitHub implements LocalGitHubPort {
     return this.runs.get(runId) ?? null;
   }
 
+  async getCodebaseContext(): Promise<string> {
+    return `Repository: ${this.repo.owner}/${this.repo.repo}\nFiles:\n- package.json\n- src/index.ts`;
+  }
+
   async viewer(): Promise<Actor> {
     return this.viewerActor;
   }
@@ -288,7 +293,12 @@ export class FakeGitHub implements LocalGitHubPort {
 /** Model double that returns queued responses and records prompts. */
 export class FakeModel implements ModelPort {
   readonly modelId = "fake-gemini";
-  readonly calls: Array<{ system: string; user: string }> = [];
+  readonly calls: Array<{
+    system: string;
+    user: string;
+    images?: Array<{ mimeType: string; dataBase64: string }>;
+    attachments?: AttachmentPart[];
+  }> = [];
   private readonly responses: string[] = [];
 
   respondWith(...responses: Array<string | object>): this {
@@ -300,8 +310,15 @@ export class FakeModel implements ModelPort {
   async generateJson(input: {
     system: string;
     user: string;
+    images?: Array<{ mimeType: string; dataBase64: string }>;
+    attachments?: AttachmentPart[];
   }): Promise<{ text: string; usage: ModelUsage }> {
-    this.calls.push({ system: input.system, user: input.user });
+    this.calls.push({
+      system: input.system,
+      user: input.user,
+      images: input.images,
+      attachments: input.attachments,
+    });
     const text = this.responses.shift();
     if (text === undefined) throw new Error("FakeModel has no queued response");
     return { text, usage: { inputTokens: 10, outputTokens: 20 } };

@@ -26,6 +26,7 @@ import { PROMPT_VERSION, buildPlannerPrompt } from "../planner/prompt.js";
 import { canonicalJson } from "../core/canonical.js";
 import type {
   Actor,
+  AttachmentPart,
   Clock,
   EvidenceStore,
   IssueData,
@@ -87,6 +88,10 @@ interface Draft {
   plan: ModelPlan;
   record: PlanRecord | null;
   created: DraftView["created"];
+  links?: string[];
+  figmaUrl?: string;
+  attachments?: AttachmentPart[];
+  images?: Array<{ mimeType: string; dataBase64: string }>;
 }
 
 const LANES: readonly LaneName[] = ["fast", "standard", "strict"];
@@ -106,11 +111,50 @@ export const LABEL_COLORS: Record<string, { color: string; description: string }
 };
 
 /** Backend of `huddle60 ui`. Decisions are posted as `/huddle60` comments so GitHub Actions validates them. */
+function formatTechnicalRefs(
+  links?: string[],
+  figmaUrl?: string,
+  attachments?: AttachmentPart[],
+  images?: Array<{ mimeType: string; dataBase64: string }>,
+): string {
+  const allLinks = [...(links ?? []), ...(figmaUrl ? [figmaUrl] : [])].filter(Boolean);
+  const allAttachments = [...(attachments ?? []), ...(images ?? [])];
+  const parts: string[] = [];
+
+  if (allLinks.length > 0) {
+    parts.push(
+      "#### 🔗 Tài liệu & Liên kết tham chiếu\n" +
+        allLinks.map((url) => `- ${sanitize(url)}`).join("\n"),
+    );
+  }
+
+  if (allAttachments.length > 0) {
+    const lines = allAttachments.map((att) => {
+      const typeLabel = att.mimeType.startsWith("image/")
+        ? "Hình ảnh"
+        : att.mimeType === "application/pdf"
+          ? "Tài liệu PDF"
+          : att.mimeType.includes("csv")
+            ? "Bảng tính CSV"
+            : att.mimeType.startsWith("text/")
+              ? "Văn bản"
+              : "Tệp đính kèm";
+      const name = att.name ? `\`${sanitize(att.name)}\`` : "Tệp đính kèm";
+      return `- ${name} (${typeLabel})`;
+    });
+    parts.push("#### 📎 Tệp đính kèm đã phân tích\n" + lines.join("\n"));
+  }
+
+  return parts.join("\n\n");
+}
+
 export class LocalApp {
   readonly workflow: WorkflowService;
   private readonly plans = new MemoryPlanStore();
   private readonly drafts = new Map<string, Draft>();
   private viewerCache: Actor | null = null;
+  private cachedItems: WorkItem[] | null = null;
+  private cachedItemsExpiresAt = 0;
 
   constructor(private readonly deps: LocalAppDeps) {
     this.workflow = new WorkflowService({
@@ -120,6 +164,12 @@ export class LocalApp {
       logger: deps.logger,
       enabled: true,
     });
+    const origHandleComment = this.workflow.handleComment.bind(this.workflow);
+    this.workflow.handleComment = async (...args) => {
+      const res = await origHandleComment(...args);
+      this.invalidateItemsCache();
+      return res;
+    };
   }
 
   private get repoUrl(): string {
@@ -169,13 +219,22 @@ export class LocalApp {
 
   // ---- Planning ---------------------------------------------------------------
 
-  async draftPlan(input: { title?: string; request: string }): Promise<DraftView> {
+  async draftPlan(input: {
+    title?: string;
+    request: string;
+    links?: string[];
+    figmaUrl?: string;
+    attachments?: AttachmentPart[];
+    images?: Array<{ mimeType: string; dataBase64: string }>;
+  }): Promise<DraftView> {
     const request = input.request.trim();
     if (request.length < 10)
       throw new AiDlcError("E_FORM", "Describe the need in at least one sentence.");
     if (request.length > 20_000) throw new AiDlcError("E_FORM", "The request is too long.");
     const title = (input.title?.trim() || (request.split("\n")[0] ?? "")).slice(0, 120).trim();
-    const plan = await this.generate(title, request, [], null);
+    const links = [...(input.links ?? []), ...(input.figmaUrl ? [input.figmaUrl] : [])].filter(Boolean);
+    const attachments = [...(input.attachments ?? []), ...(input.images ?? [])];
+    const plan = await this.generate(title, request, [], null, links, attachments);
     const draft: Draft = {
       id: randomUUID(),
       title,
@@ -184,6 +243,10 @@ export class LocalApp {
       plan,
       record: null,
       created: null,
+      links,
+      figmaUrl: input.figmaUrl,
+      attachments,
+      images: input.images,
     };
     this.drafts.set(draft.id, draft);
     if (this.drafts.size > MAX_DRAFTS) {
@@ -201,7 +264,14 @@ export class LocalApp {
     if (text.length === 0) throw new AiDlcError("E_FORM", "Write an answer or a change request.");
     if (text.length > 5_000) throw new AiDlcError("E_FORM", "The answer is too long.");
     const clarifications = [...draft.clarifications, text];
-    draft.plan = await this.generate(draft.title, draft.request, clarifications, draft.plan);
+    draft.plan = await this.generate(
+      draft.title,
+      draft.request,
+      clarifications,
+      draft.plan,
+      draft.links,
+      draft.attachments,
+    );
     draft.clarifications = clarifications;
     return this.view(draft);
   }
@@ -220,7 +290,11 @@ export class LocalApp {
     }
     const { github, clock, logger } = this.deps;
     if (!draft.record) {
-      const body = `### ${SECTIONS.request}\n\n${sanitize(draft.request)}\n`;
+      let body = `### ${SECTIONS.request}\n\n${sanitize(draft.request)}\n`;
+      const techRefs = formatTechnicalRefs(draft.links, draft.figmaUrl, draft.attachments, draft.images);
+      if (techRefs) {
+        body += `\n### ${SECTIONS.technicalRefs}\n\n${techRefs}\n`;
+      }
       const issue = await github.createIssue({
         title: draft.title,
         body,
@@ -250,6 +324,7 @@ export class LocalApp {
         ),
       ),
     };
+    this.invalidateItemsCache();
     return this.view(draft);
   }
 
@@ -265,6 +340,8 @@ export class LocalApp {
     request: string,
     clarifications: string[],
     previous: ModelPlan | null,
+    links?: string[],
+    attachments?: AttachmentPart[],
   ): Promise<ModelPlan> {
     const { model, logger } = this.deps;
     if (!model) {
@@ -274,13 +351,24 @@ export class LocalApp {
       );
     }
     const policy = await this.workflow.policy();
+    let codebaseContext: string | undefined;
+    if (this.deps.github.getCodebaseContext) {
+      try {
+        codebaseContext = await this.deps.github.getCodebaseContext();
+      } catch {
+        // Fall back gracefully
+      }
+    }
     const prompt = buildPlannerPrompt({
       title,
       request,
       clarifications,
+      codebaseContext,
+      links,
+      hasAttachments: Boolean(attachments && attachments.length > 0),
       ...(previous ? { previousPlanJson: canonicalJson(previous) } : {}),
     });
-    return (await generatePlan(model, logger, prompt, policy.planner.max_nodes)).plan;
+    return (await generatePlan(model, logger, prompt, policy.planner.max_nodes, attachments)).plan;
   }
 
   private record(draft: Draft, issue: IssueData, policy: Policy, requestedBy: number): PlanRecord {
@@ -288,6 +376,7 @@ export class LocalApp {
     const digest = computeRequestDigest(issue.title, issue.body);
     const planHash = computePlanHash(digest, draft.plan);
     const now = clock.now();
+    const technicalRefs = formatTechnicalRefs(draft.links, draft.figmaUrl, draft.attachments, draft.images);
     return {
       schemaVersion: PLAN_SCHEMA_VERSION,
       planId: buildPlanId(issue.number, 1, planHash),
@@ -308,6 +397,7 @@ export class LocalApp {
       requestedBy,
       createdAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + policy.planner.plan_ttl_days * 86_400_000).toISOString(),
+      technicalRefs: technicalRefs || undefined,
     };
   }
 
@@ -352,7 +442,17 @@ export class LocalApp {
 
   // ---- Work items and decisions ----------------------------------------------
 
-  async listItems(): Promise<WorkItem[]> {
+  invalidateItemsCache(): void {
+    this.cachedItems = null;
+    this.cachedItemsExpiresAt = 0;
+  }
+
+  async listItems(forceRefresh = false): Promise<WorkItem[]> {
+    const now = Date.now();
+    if (!forceRefresh && this.cachedItems && now < this.cachedItemsExpiresAt) {
+      return this.cachedItems;
+    }
+
     const policy = await this.workflow.policy();
     const seen = new Map<number, IssueData>();
     for (const label of Object.values(KIND_LABEL)) {
@@ -360,7 +460,10 @@ export class LocalApp {
         seen.set(issue.number, issue);
     }
     const issues = [...seen.values()].sort((a, b) => a.number - b.number);
-    return mapLimit(issues, 4, (issue) => this.item(issue, policy));
+    const items = await mapLimit(issues, 4, (issue) => this.item(issue, policy));
+    this.cachedItems = items;
+    this.cachedItemsExpiresAt = now + 30_000; // 30s in-memory TTL
+    return items;
   }
 
   private async item(issue: IssueData, policy: Policy): Promise<WorkItem> {
@@ -453,6 +556,7 @@ export class LocalApp {
         throw new AiDlcError("E_SYNTAX", "Unknown action.");
     }
     const comment = await this.deps.github.createComment(issueNumber, command);
+    this.invalidateItemsCache();
     return { commentId: comment.id, command };
   }
 
@@ -563,6 +667,7 @@ export class LocalApp {
       await this.deps.github.addLabels(issueNumber, [LABELS.stale]);
     }
 
+    this.invalidateItemsCache();
     return updated;
   }
 

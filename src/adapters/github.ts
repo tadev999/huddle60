@@ -100,7 +100,12 @@ export async function connectRepository(
   repo: string,
 ): Promise<OctokitGitHub> {
   const { data } = await octokit.rest.repos.get({ owner, repo });
-  return new OctokitGitHub(octokit, { owner, repo, repositoryId: data.id }, data.default_branch);
+  return new OctokitGitHub(
+    octokit,
+    { owner, repo, repositoryId: data.id },
+    data.default_branch,
+    data.permissions,
+  );
 }
 
 export class OctokitGitHub implements LocalGitHubPort {
@@ -110,7 +115,18 @@ export class OctokitGitHub implements LocalGitHubPort {
     readonly octokit: GitHubClient,
     readonly repo: RepoRef,
     private defaultBranch?: string,
+    readonly permissions?: {
+      admin?: boolean;
+      maintain?: boolean;
+      push?: boolean;
+      triage?: boolean;
+      pull?: boolean;
+    },
   ) {}
+
+  canWrite(): boolean {
+    return Boolean(this.permissions?.admin || this.permissions?.push || this.permissions?.maintain);
+  }
 
   private get base() {
     return { owner: this.repo.owner, repo: this.repo.repo };
@@ -147,6 +163,86 @@ export class OctokitGitHub implements LocalGitHubPort {
       if (isStatus(error, 404, 410))
         throw new AiDlcError("E_GITHUB_API", `Issue #${number} was not found.`);
       throw error;
+    }
+  }
+
+  async getCodebaseContext(): Promise<string> {
+    try {
+      const branch = await this.getDefaultBranch();
+      const parts: string[] = [`Repository: ${this.repo.owner}/${this.repo.repo} (default branch: ${branch})`];
+
+      // 1. Fetch file tree
+      try {
+        const { data } = await this.octokit.rest.git.getTree({
+          ...this.base,
+          tree_sha: branch,
+          recursive: "1",
+        });
+        if (data.tree && Array.isArray(data.tree)) {
+          const ignorePrefixes = [
+            ".git/",
+            "node_modules/",
+            "dist/",
+            "build/",
+            ".next/",
+            ".output/",
+            "coverage/",
+            ".gemini/",
+            ".idea/",
+            ".vscode/",
+          ];
+          const files = data.tree
+            .filter((item) => item.type === "blob" && item.path)
+            .map((item) => item.path as string)
+            .filter((path) => !ignorePrefixes.some((prefix) => path.startsWith(prefix)))
+            .filter(
+              (path) =>
+                !path.endsWith(".png") &&
+                !path.endsWith(".jpg") &&
+                !path.endsWith(".jpeg") &&
+                !path.endsWith(".ico") &&
+                !path.endsWith(".svg") &&
+                !path.endsWith(".lock") &&
+                !path.endsWith("-lock.json") &&
+                !path.endsWith(".map"),
+            )
+            .slice(0, 150);
+
+          if (files.length > 0) {
+            parts.push(`Key files in repository (${files.length} files):\n${files.map((f) => `- ${f}`).join("\n")}`);
+          }
+        }
+      } catch {
+        // Fall back gracefully
+      }
+
+      // 2. Fetch package.json if exists
+      const pkgJson = await this.readFile("package.json", branch);
+      if (pkgJson) {
+        try {
+          const parsed = JSON.parse(pkgJson) as Record<string, unknown>;
+          const manifestSummary: Record<string, unknown> = {};
+          if (parsed.name) manifestSummary.name = parsed.name;
+          if (parsed.description) manifestSummary.description = parsed.description;
+          if (parsed.dependencies && typeof parsed.dependencies === "object") {
+            manifestSummary.dependencies = Object.keys(parsed.dependencies);
+          }
+          if (parsed.devDependencies && typeof parsed.devDependencies === "object") {
+            manifestSummary.devDependencies = Object.keys(parsed.devDependencies);
+          }
+          parts.push(`package.json summary:\n${JSON.stringify(manifestSummary, null, 2)}`);
+        } catch {}
+      }
+
+      // 3. Fetch README.md if exists (first 1000 chars)
+      const readme = await this.readFile("README.md", branch);
+      if (readme) {
+        parts.push(`README preview:\n${readme.slice(0, 1000).trim()}...`);
+      }
+
+      return parts.join("\n\n");
+    } catch {
+      return `Repository: ${this.repo.owner}/${this.repo.repo}`;
     }
   }
 

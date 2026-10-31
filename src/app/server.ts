@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import { z } from "zod";
 import { isAiDlcError } from "../core/errors.js";
+import { RolesSchema } from "../core/policy.js";
 import type { Logger } from "../ports.js";
 import type { LocalApp } from "./local-app.js";
 import { LocalAppManager } from "./manager.js";
@@ -46,7 +47,7 @@ export function extractSubdomain(hostHeader: string | undefined): string | null 
 }
 
 export const TOKEN_HEADER = "x-ai-dlc-token";
-const MAX_BODY = 256 * 1024;
+const MAX_BODY = 10 * 1024 * 1024; // 10MB to accommodate image attachments
 
 const STATIC_FILES: Record<string, { file: string; type: string }> = {
   "/": { file: "index.html", type: "text/html; charset=utf-8" },
@@ -68,9 +69,19 @@ const SECURITY_HEADERS = {
   "cache-control": "no-store",
 };
 
+const AttachmentSchema = z.object({
+  name: z.string().max(200).optional(),
+  mimeType: z.string().max(100),
+  dataBase64: z.string().max(15 * 1024 * 1024),
+});
+
 const DraftInput = z.object({
   title: z.string().max(200).optional(),
   request: z.string().max(20_000),
+  links: z.array(z.string().trim().max(1000)).max(20).optional(),
+  figmaUrl: z.string().trim().max(1000).optional(),
+  attachments: z.array(AttachmentSchema).max(10).optional(),
+  images: z.array(AttachmentSchema).max(10).optional(),
 });
 const RefineInput = z.object({ clarification: z.string().max(5_000) });
 const DecideInput = z.object({
@@ -100,6 +111,12 @@ const UpdateIssueInput = z.object({
 });
 const RefineIssueInput = z.object({
   instruction: z.string().min(1).max(5000),
+});
+const UpdateRolesInput = z.object({
+  roles: RolesSchema,
+});
+const ResolveUserInput = z.object({
+  username: z.string().min(1).max(100),
 });
 
 class HttpError extends Error {
@@ -238,6 +255,16 @@ export function createAppHandler(options: AppServerOptions) {
     },
     {
       method: "POST",
+      pattern: /^\/api\/auth\/gh-cli$/u,
+      handle: async (_m, _b, tenant) => (await getManagerFor(tenant)).connectFromGhCli(),
+    },
+    {
+      method: "POST",
+      pattern: /^\/api\/auth\/disconnect$/u,
+      handle: async (_m, _b, tenant) => (await getManagerFor(tenant)).disconnectGithub(),
+    },
+    {
+      method: "POST",
       pattern: /^\/api\/settings\/test-gemini$/u,
       handle: async (_m, body, tenant) => {
         const input = TestGeminiInput.parse(body ?? {});
@@ -250,6 +277,36 @@ export function createAppHandler(options: AppServerOptions) {
       handle: async (_m, _b, tenant) => (await getManagerFor(tenant)).initRepo(),
     },
     {
+      method: "GET",
+      pattern: /^\/api\/policy\/roles$/u,
+      handle: async (_m, _b, tenant) => {
+        const mgr = await getManagerFor(tenant).catch(() => null);
+        if (!mgr) return { roles: null, canEdit: false };
+        return {
+          roles: mgr.getPolicyRoles(),
+          canEdit: mgr.canEditRoles(),
+        };
+      },
+    },
+    {
+      method: "POST",
+      pattern: /^\/api\/policy\/roles$/u,
+      handle: async (_m, body, tenant) => {
+        const mgr = await getManagerFor(tenant);
+        const input = UpdateRolesInput.parse(body);
+        return mgr.updatePolicyRoles(input.roles);
+      },
+    },
+    {
+      method: "POST",
+      pattern: /^\/api\/users\/resolve$/u,
+      handle: async (_m, body, tenant) => {
+        const mgr = await getManagerFor(tenant);
+        const input = ResolveUserInput.parse(body);
+        return mgr.resolveUser(input.username);
+      },
+    },
+    {
       method: "POST",
       pattern: /^\/api\/plans$/u,
       handle: async (_m, body, tenant) => {
@@ -257,6 +314,10 @@ export function createAppHandler(options: AppServerOptions) {
         return (await getAppFor(tenant)).draftPlan({
           request: input.request,
           ...(input.title ? { title: input.title } : {}),
+          ...(input.links ? { links: input.links } : {}),
+          ...(input.figmaUrl ? { figmaUrl: input.figmaUrl } : {}),
+          ...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments } : {}),
+          ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
         });
       },
     },
@@ -274,7 +335,11 @@ export function createAppHandler(options: AppServerOptions) {
     {
       method: "GET",
       pattern: /^\/api\/items$/u,
-      handle: async (_m, _b, tenant) => (await getAppFor(tenant)).listItems(),
+      handle: async (_m, _b, tenant, url) => {
+        const force =
+          url?.searchParams.get("refresh") === "true" || url?.searchParams.get("refresh") === "1";
+        return (await getAppFor(tenant)).listItems(force);
+      },
     },
     {
       method: "GET",
@@ -338,12 +403,43 @@ export function createAppHandler(options: AppServerOptions) {
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     try {
-      const tenant = extractSubdomain(req.headers.host);
+      const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
+      let tenant = extractSubdomain(req.headers.host);
+
+      if (!tenant) {
+        const headerTenant = req.headers["x-huddle60-tenant"];
+        if (typeof headerTenant === "string" && headerTenant.trim()) {
+          tenant = headerTenant.trim();
+        }
+      }
+      if (!tenant) {
+        const qTenant = url.searchParams.get("tenant");
+        if (qTenant && qTenant.trim()) {
+          tenant = qTenant.trim();
+        }
+      }
+      if (!tenant) {
+        const cookieTenant = getCookie(req, "huddle60_tenant");
+        if (cookieTenant && cookieTenant.trim()) {
+          tenant = cookieTenant.trim();
+        }
+      }
+      if (!tenant) {
+        const cleanPath = url.pathname.replace(/\/+$/, "") || "/";
+        const firstSegment = cleanPath.split("/").filter(Boolean)[0];
+        if (
+          firstSegment &&
+          !["api", "app", "landing", "index.html"].includes(firstSegment) &&
+          !firstSegment.includes(".")
+        ) {
+          tenant = firstSegment;
+        }
+      }
+
       if (!isAllowedHost(req.headers.host ?? "")) throw new HttpError(421, "E_HOST", "Bad host.");
       const origin = req.headers.origin;
       if (!isAllowedOrigin(origin))
         throw new HttpError(403, "E_ORIGIN", "Cross-origin requests are not allowed.");
-      const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
 
       // Public GitHub OAuth endpoints (no session token required)
       if (url.pathname === "/api/auth/github") {
@@ -410,24 +506,40 @@ export function createAppHandler(options: AppServerOptions) {
       }
 
       if (!url.pathname.startsWith("/api/")) {
-        let entry = STATIC_FILES[url.pathname];
-        if (url.pathname === "/") {
+        const cleanPath = url.pathname.replace(/\/+$/, "") || "/";
+        let entry = STATIC_FILES[cleanPath];
+        if (cleanPath === "/") {
           entry = tenant ? STATIC_FILES["/"] : STATIC_FILES["/landing"];
+        } else if (!entry && !cleanPath.includes(".")) {
+          // SPA clean URL route, e.g. /skill_bento or /tadev999/skill_bento
+          entry = STATIC_FILES["/"];
         }
         if (req.method !== "GET" || !entry) throw new HttpError(404, "E_NOT_FOUND", "Not found.");
         let content = await readFile(join(uiDir, entry.file));
 
-        const headers: Record<string, string> = {
+        const isStaticAsset =
+          cleanPath.endsWith(".css") || cleanPath.endsWith(".js") || cleanPath.endsWith(".svg");
+
+        const cookieDirectives = [
+          `huddle60_token=${token}; Path=/; SameSite=Lax`,
+          tenant ? `huddle60_tenant=${tenant}; Path=/; SameSite=Lax` : "",
+        ].filter(Boolean);
+
+        const headers: Record<string, string | string[]> = {
           ...SECURITY_HEADERS,
           "content-type": entry.type,
-          "set-cookie": `huddle60_token=${token}; Path=/; SameSite=Lax`,
+          "cache-control": isStaticAsset
+            ? "public, max-age=86400, stale-while-revalidate=3600"
+            : "no-store",
+          "set-cookie": cookieDirectives,
         };
 
         if (entry.type.startsWith("text/html")) {
           const html = content.toString("utf8");
           const injected = html.replace(
             "<head>",
-            `<head>\n    <meta name="huddle60-session-token" content="${token}" />`,
+            `<head>\n    <meta name="huddle60-session-token" content="${token}" />` +
+              (tenant ? `\n    <meta name="huddle60-tenant" content="${tenant}" />` : ""),
           );
           content = Buffer.from(injected, "utf8");
         }

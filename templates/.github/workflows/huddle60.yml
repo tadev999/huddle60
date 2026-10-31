@@ -6,21 +6,24 @@ on:
     types: [created, edited, deleted]
   pull_request_target:
     types: [opened, edited, synchronize, reopened, ready_for_review]
-permissions: {}
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  statuses: write
 jobs:
   huddle60:
     # Never check out or run pull request code in this job: it holds a write token.
     if: github.event_name == 'pull_request_target' || (github.event.issue.pull_request == null && github.event.sender.type != 'Bot' && (startsWith(github.event.comment.body, '/huddle60') || startsWith(github.event.comment.body, '/ai-dlc') || github.event.action != 'created'))
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - id: app-token
+        if: ${{ vars.AI_DLC_APP_ID != '' }}
         uses: actions/create-github-app-token@v1
         with:
           app-id: ${{ vars.AI_DLC_APP_ID }}
           private-key: ${{ secrets.AI_DLC_APP_PRIVATE_KEY }}
       - uses: tadev999/huddle60@main
         with:
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           enabled: ${{ vars.AI_DLC_ENABLED || 'true' }}

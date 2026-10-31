@@ -14,6 +14,9 @@ const state = {
   collapsed: new Set(),
   userRepos: [],
   loadingRepos: false,
+  rolesDraft: { po: [], dev: [], maintainer: [] },
+  canEditRoles: false,
+  planAttachments: [],
 };
 
 // ---------- utilities ----------
@@ -40,17 +43,18 @@ function readToken() {
   const match = /(?:^|&)token=([\w-]+)/.exec(location.hash.slice(1));
   if (match) {
     sessionStorage.setItem(TOKEN_KEY, match[1]);
-    history.replaceState(null, "", location.pathname);
+    history.replaceState(null, "", location.pathname + (location.search || ""));
     return match[1];
   }
-  const stored = sessionStorage.getItem(TOKEN_KEY);
-  if (stored) return stored;
 
   const meta = document.querySelector('meta[name="huddle60-session-token"]');
   if (meta && meta.content) {
     sessionStorage.setItem(TOKEN_KEY, meta.content);
     return meta.content;
   }
+
+  const stored = sessionStorage.getItem(TOKEN_KEY);
+  if (stored) return stored;
 
   const cookieMatch = /(?:^|;\s*)huddle60_token=([\w-]+)/.exec(document.cookie);
   if (cookieMatch) {
@@ -61,7 +65,21 @@ function readToken() {
   return null;
 }
 
-const token = readToken();
+let token = readToken();
+
+function readTenant() {
+  const meta = document.querySelector('meta[name="huddle60-tenant"]');
+  if (meta?.content) return meta.content;
+  const match = /(?:^|;\s*)huddle60_tenant=([\w-]+)/.exec(document.cookie);
+  if (match) return match[1];
+  const parts = window.location.pathname.split("/").filter(Boolean);
+  if (parts.length >= 1 && !["app", "landing", "index.html"].includes(parts[0])) {
+    return parts[0];
+  }
+  return null;
+}
+
+const currentTenant = readTenant();
 
 class ApiError extends Error {
   constructor(code, message) {
@@ -70,9 +88,14 @@ class ApiError extends Error {
   }
 }
 
-async function api(path, body, method) {
+async function api(path, body, method, isRetry = false) {
+  const tenantToPass = state.session?.tenant || currentTenant;
+  const currentToken = token || readToken();
   const init = {
-    headers: { "x-ai-dlc-token": token ?? "" },
+    headers: {
+      "x-ai-dlc-token": currentToken ?? "",
+      ...(tenantToPass ? { "x-huddle60-tenant": tenantToPass } : {}),
+    },
     method: method ?? (body !== undefined ? "POST" : "GET"),
   };
   if (body !== undefined) {
@@ -83,6 +106,15 @@ async function api(path, body, method) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = data.error ?? { code: "E_HTTP", message: `HTTP ${response.status}` };
+    if (error.code === "E_TOKEN" && !isRetry) {
+      sessionStorage.removeItem(TOKEN_KEY);
+      const meta = document.querySelector('meta[name="huddle60-session-token"]');
+      if (meta?.content && meta.content !== currentToken) {
+        token = meta.content;
+        sessionStorage.setItem(TOKEN_KEY, token);
+        return api(path, body, method, true);
+      }
+    }
     throw new ApiError(error.code, error.message);
   }
   return data;
@@ -244,10 +276,81 @@ function readyLanes(item) {
   return lanes.filter(([, lane]) => !lane.requiresPoApproval).map(([lane]) => lane);
 }
 
+function getShareUrl(itemNumber) {
+  const session = state.session || {};
+  const repo = session.repo;
+  const owner = repo?.owner || session.tenant || session.viewer?.login;
+  const repoName = repo?.repo;
+
+  const hostname = window.location.hostname;
+  const port = window.location.port ? `:${window.location.port}` : "";
+  const protocol = window.location.protocol;
+
+  if (owner && repoName) {
+    if (hostname.toLowerCase().startsWith(`${owner.toLowerCase()}.`)) {
+      return `${protocol}//${window.location.host}/${repoName}#${itemNumber}`;
+    }
+    if (hostname === "huddle60.app" || hostname.endsWith(".huddle60.app")) {
+      return `https://${owner}.huddle60.app/${repoName}#${itemNumber}`;
+    }
+    if (hostname === "localhost" || hostname === "127.0.0.1") {
+      return `${protocol}//${owner}.localhost${port}/${repoName}#${itemNumber}`;
+    }
+    return `${protocol}//${window.location.host}/${owner}/${repoName}#${itemNumber}`;
+  }
+  return `${window.location.origin}/#${itemNumber}`;
+}
+
+async function copyTaskShareLink(button, item) {
+  const shareUrl = getShareUrl(item.number);
+  try {
+    await navigator.clipboard.writeText(shareUrl);
+    const original = button.textContent;
+    button.textContent = "✓ Đã chép!";
+    button.classList.add("copied");
+    log("ok", `Đã sao chép liên kết công việc #${item.number}`, { text: shareUrl });
+    setTimeout(() => {
+      button.textContent = original;
+      button.classList.remove("copied");
+    }, 2000);
+  } catch (_e) {
+    prompt("Sao chép link chia sẻ công việc:", shareUrl);
+  }
+}
+
+async function promptGuestLogin(actionName) {
+  const result = await openDialog({
+    title: `Yêu cầu quyền: ${actionName}`,
+    body: h(
+      "div",
+      {},
+      h("p", {}, "Bạn đang xem công việc ở Chế độ Khách (Read-only)."),
+      h(
+        "p",
+        {},
+        `Để thực hiện thao tác "${actionName}", bạn cần kết nối tài khoản GitHub có vai trò phù hợp trong tệp policy của repository.`,
+      ),
+    ),
+    okLabel: "Đi tới Cài đặt & Kết nối",
+  });
+  if (result === "ok") {
+    switchView("settings");
+  }
+}
+
 function actionsFor(item) {
   const pending = state.pending.get(item.number);
   if (pending) return [h("span", { class: "meta" }, `${pending} · Chờ Actions`)];
   const buttons = [
+    h(
+      "button",
+      {
+        class: "btn ghost btn-share-task",
+        title: "Sao chép link chia sẻ task này cho DEV hoặc đồng đội",
+        onclick: (e) => copyTaskShareLink(e.currentTarget, item),
+      },
+      "🔗 Chia sẻ",
+    ),
     h(
       "a",
       {
@@ -258,6 +361,15 @@ function actionsFor(item) {
         title: "Mở trên GitHub",
       },
       "↗",
+    ),
+    h(
+      "button",
+      {
+        class: "btn ghost",
+        title: "Sao chép ngữ cảnh cho Coding Agent (Cursor / Claude Code)",
+        onclick: (e) => showContext(e.currentTarget, item),
+      },
+      "Context",
     ),
   ];
   if (hasRole("dev") || hasRole("po")) {
@@ -273,20 +385,8 @@ function actionsFor(item) {
       ),
     );
   }
-  if (item.stage === "in-progress") {
-    buttons.push(
-      h(
-        "button",
-        {
-          class: "btn ghost",
-          title: "Context cho coding agent",
-          onclick: (e) => showContext(e.currentTarget, item),
-        },
-        "Context",
-      ),
-    );
-  }
-  if (hasRole("dev") && item.stage !== "in-progress") {
+  const hasChildren = state.items.some((other) => other.parent === item.number);
+  if (hasRole("dev") && item.stage !== "in-progress" && (item.kind === "task" || !hasChildren)) {
     const lanes = readyLanes(item);
     if (lanes.length > 0) {
       const select = h(
@@ -334,6 +434,36 @@ function actionsFor(item) {
       ),
     );
   }
+
+  // Helpful guidance for Guest users (without role)
+  if (!hasRole("dev") && !hasRole("po")) {
+    if (item.stage === "awaiting-approval" && item.kind !== "task") {
+      buttons.push(
+        h(
+          "button",
+          {
+            class: "btn ghost",
+            title: "Duyệt yêu cầu (Chế độ Khách: Click để xem cách đăng nhập)",
+            onclick: () => promptGuestLogin("Duyệt yêu cầu (Approve)"),
+          },
+          "Approve",
+        ),
+      );
+    } else if (item.stage !== "in-progress") {
+      buttons.push(
+        h(
+          "button",
+          {
+            class: "btn ghost",
+            title: "Xác nhận triển khai (Chế độ Khách: Click để xem cách đăng nhập)",
+            onclick: () => promptGuestLogin("Nhận việc (Ready)"),
+          },
+          "Ready",
+        ),
+      );
+    }
+  }
+
   return buttons;
 }
 
@@ -375,6 +505,7 @@ function renderItems() {
       return h(
         "tr",
         {
+          id: `item-${item.number}`,
           class: contextOnly ? "context-row" : "",
           "data-issue": item.number,
           "data-context": String(contextOnly),
@@ -420,12 +551,44 @@ function renderItems() {
   }
 }
 
-async function loadItems() {
+function focusTargetTask() {
+  const hash = window.location.hash.replace(/^#/, "");
+  if (!hash || hash.startsWith("token=")) return;
+  const match = /^(\d+)$/.exec(hash) || /^task-(\d+)$/.exec(hash) || /^issue-(\d+)$/.exec(hash);
+  const targetNumber = match ? Number(match[1]) : null;
+  if (!targetNumber) return;
+
+  const itemExists = state.items.some((i) => i.number === targetNumber);
+  if (!itemExists) return;
+
+  const isVisible = visibleItems().some((i) => i.number === targetNumber);
+  if (!isVisible) {
+    state.filter = "all";
+    for (const chip of document.querySelectorAll("#filters .chip")) {
+      chip.classList.toggle("active", chip.dataset.filter === "all");
+    }
+    renderItems();
+  }
+
+  const row = document.getElementById(`item-${targetNumber}`);
+  if (row) {
+    row.classList.add("target-highlight");
+    row.scrollIntoView({ behavior: "smooth", block: "center" });
+    log("ok", `Đang mở công việc #${targetNumber} theo liên kết`);
+    setTimeout(() => {
+      row.classList.remove("target-highlight");
+    }, 4000);
+  }
+}
+
+async function loadItems(force = false) {
   const button = $("#refresh");
   await withBusy(button, async () => {
     try {
-      state.items = await api("/api/items");
+      const url = force ? "/api/items?refresh=1" : "/api/items";
+      state.items = await api(url);
       renderItems();
+      focusTargetTask();
     } catch (error) {
       logError("Không tải được công việc", error);
     }
@@ -774,14 +937,198 @@ function renderDraft() {
   }
 }
 
+function getFileIcon(mimeType, name = "") {
+  if (mimeType.startsWith("image/")) return "🖼️";
+  if (mimeType === "application/pdf" || name.endsWith(".pdf")) return "📄";
+  if (
+    mimeType.includes("csv") ||
+    name.endsWith(".csv") ||
+    name.endsWith(".xlsx") ||
+    name.endsWith(".xls")
+  )
+    return "📊";
+  if (name.endsWith(".json")) return "⚙️";
+  if (name.endsWith(".md")) return "📝";
+  return "📎";
+}
+
+function renderPlanAttachments() {
+  const container = $("#plan-attachment-previews") || $("#plan-image-previews");
+  if (!container) return;
+  if (!state.planAttachments || state.planAttachments.length === 0) {
+    container.hidden = true;
+    container.replaceChildren();
+    return;
+  }
+  container.hidden = false;
+  container.replaceChildren(
+    ...state.planAttachments.map((att, index) => {
+      const isImg = att.mimeType.startsWith("image/");
+      const chip = h(
+        "div",
+        { class: `attachment-chip ${isImg ? "is-image" : "is-doc"}` },
+        isImg
+          ? h("img", {
+              src: `data:${att.mimeType};base64,${att.dataBase64}`,
+              alt: att.name || `Tệp ${index + 1}`,
+            })
+          : [
+              h("span", { class: "doc-icon" }, getFileIcon(att.mimeType, att.name)),
+              h(
+                "span",
+                { class: "doc-name", title: att.name || "Tệp đính kèm" },
+                att.name || "Tệp đính kèm",
+              ),
+            ],
+        h(
+          "button",
+          {
+            type: "button",
+            class: "chip-remove",
+            title: "Xóa tệp",
+            onclick: (e) => {
+              e.stopPropagation();
+              state.planAttachments.splice(index, 1);
+              renderPlanAttachments();
+            },
+          },
+          "×",
+        ),
+      );
+      return chip;
+    }),
+  );
+}
+
+async function addPlanAttachmentFile(file) {
+  if (!file) return;
+  state.planAttachments = state.planAttachments || [];
+  if (state.planAttachments.length >= 10) {
+    alert("Tối đa 10 tệp đính kèm cho mỗi kế hoạch.");
+    return;
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    alert(`Dung lượng tệp "${file.name}" vượt quá 10MB.`);
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = reader.result;
+    if (typeof dataUrl === "string") {
+      const base64 = dataUrl.split(",")[1];
+      const mime =
+        file.type ||
+        (file.name.endsWith(".csv")
+          ? "text/csv"
+          : file.name.endsWith(".md")
+            ? "text/markdown"
+            : "application/octet-stream");
+      state.planAttachments.push({
+        mimeType: mime,
+        dataBase64: base64,
+        name: file.name,
+      });
+      renderPlanAttachments();
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+function initPlanAttachments() {
+  const dropzone = $("#plan-dropzone");
+  const fileInput = $("#plan-file-input");
+  const browseBtn = $("#plan-browse-btn");
+
+  if (!dropzone || !fileInput) return;
+
+  browseBtn?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    fileInput.click();
+  });
+
+  dropzone.addEventListener("click", (e) => {
+    if (e.target.closest(".chip-remove") || e.target.closest("button")) return;
+    fileInput.click();
+  });
+
+  fileInput.addEventListener("change", () => {
+    if (fileInput.files) {
+      for (const file of fileInput.files) {
+        addPlanAttachmentFile(file);
+      }
+      fileInput.value = "";
+    }
+  });
+
+  ["dragenter", "dragover"].forEach((eventName) => {
+    dropzone.addEventListener(eventName, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropzone.classList.add("dragover");
+    });
+  });
+
+  ["dragleave", "drop"].forEach((eventName) => {
+    dropzone.addEventListener(eventName, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropzone.classList.remove("dragover");
+    });
+  });
+
+  dropzone.addEventListener("drop", (e) => {
+    const files = e.dataTransfer?.files;
+    if (files) {
+      for (const file of files) {
+        addPlanAttachmentFile(file);
+      }
+    }
+  });
+
+  // Global paste handler when in Plan view
+  window.addEventListener("paste", (e) => {
+    const planView = $("#view-plan");
+    if (!planView || planView.hidden) return;
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.kind === "file") {
+        const file = item.getAsFile();
+        if (file) addPlanAttachmentFile(file);
+      }
+    }
+  });
+}
+
 async function generatePlan(event) {
   event.preventDefault();
   const request = $("#plan-request").value;
   const title = $("#plan-title").value;
+  const linksRaw = $("#plan-links")
+    ? $("#plan-links").value
+    : $("#plan-figma")
+      ? $("#plan-figma").value
+      : "";
+  const links = linksRaw
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith("http://") || l.startsWith("https://"));
+
+  const attachments = (state.planAttachments || []).map((att) => ({
+    name: att.name,
+    mimeType: att.mimeType,
+    dataBase64: att.dataBase64,
+  }));
   const update = log("pending", "Đang tạo kế hoạch…");
   await withBusy($("#plan-generate"), async () => {
     try {
-      state.draft = await api("/api/plans", { title, request });
+      state.draft = await api("/api/plans", {
+        title,
+        request,
+        links: links.length > 0 ? links : undefined,
+        attachments: attachments.length > 0 ? attachments : undefined,
+      });
       renderDraft();
       update(
         "ok",
@@ -850,93 +1197,7 @@ async function loadSettings() {
   try {
     const data = await api("/api/settings");
     state.settings = data;
-
-    // Repo
-    $("#input-repo").value = data.repo || "";
-    const sourceHints = {
-      cli: "(Được truyền qua cờ dòng lệnh --repo)",
-      git: "(Tự động nhận diện từ git remote local)",
-      env: "(Lấy từ biến môi trường GITHUB_REPOSITORY)",
-      config: "(Được lưu trong file cấu hình local)",
-      none: "",
-    };
-    $("#repo-source-hint").textContent = sourceHints[data.repoSource] || "";
-
-    // Recent repos chips
-    const recentWrap = $("#recent-repos-wrap");
-    const chipsContainer = $("#recent-repos-chips");
-    const currentRepo = data.repo || "";
-    const recentRepos = data.recentRepos || (currentRepo ? [currentRepo] : []);
-
-    // Update datalist with user repos
-    const datalist = $("#repo-datalist");
-    if (datalist && state.userRepos.length > 0 && !datalist.children.length) {
-      datalist.innerHTML = "";
-      for (const r of state.userRepos) {
-        const opt = document.createElement("option");
-        opt.value = r.fullName;
-        if (r.description) opt.label = r.description;
-        datalist.appendChild(opt);
-      }
-    }
-
-    if (recentRepos.length > 0) {
-      recentWrap.hidden = false;
-      chipsContainer.replaceChildren(
-        ...recentRepos.map((r) => {
-          const isActive = r === currentRepo;
-          const chip = h(
-            "div",
-            { class: `recent-chip ${isActive ? "active" : ""}` },
-            h(
-              "span",
-              {
-                onclick: async () => {
-                  if (r !== currentRepo) {
-                    await switchRepository(r);
-                  }
-                },
-              },
-              `📁 ${r}`,
-            ),
-            h(
-              "button",
-              {
-                class: "recent-chip-remove",
-                title: "Xóa khỏi danh sách gần đây",
-                onclick: async (e) => {
-                  e.stopPropagation();
-                  await removeRecentRepository(r);
-                },
-              },
-              "✕",
-            ),
-          );
-          return chip;
-        }),
-      );
-    } else {
-      recentWrap.hidden = true;
-    }
-
-    const repoBadge = $("#repo-status-badge");
-    repoBadge.className = "badge";
-    if (data.policyStatus === "ready") {
-      repoBadge.classList.add("ok");
-      repoBadge.textContent = "✓ Sẵn sàng (AI-DLC)";
-    } else if (data.repo) {
-      repoBadge.classList.add("warn");
-      repoBadge.textContent = "Chưa khởi tạo policy";
-    } else {
-      repoBadge.classList.add("danger");
-      repoBadge.textContent = "Chưa chọn repo";
-    }
-
-    $("#repo-init-card").hidden = !(
-      data.hasGithubToken &&
-      data.repo &&
-      data.policyStatus !== "ready"
-    );
+    updateRepoInitBanner();
 
     // GitHub
     const ghBadge = $("#github-status-badge");
@@ -945,16 +1206,16 @@ async function loadSettings() {
       ghBadge.classList.add("ok");
       ghBadge.textContent = `✓ Đã kết nối (@${data.githubUser.login})`;
       $("#github-user-row").hidden = false;
+      const connectSec = $("#github-connect-section");
+      if (connectSec) connectSec.hidden = true;
       $("#github-user-login").textContent = `@${data.githubUser.login}`;
       $("#github-user-id").textContent = `ID: ${data.githubUser.id}`;
-    } else if (data.hasGithubToken) {
-      ghBadge.classList.add("warn");
-      ghBadge.textContent = "Token đã cấu hình";
-      $("#github-user-row").hidden = true;
     } else {
       ghBadge.classList.add("danger");
-      ghBadge.textContent = "Chưa có token";
+      ghBadge.textContent = "Chưa kết nối";
       $("#github-user-row").hidden = true;
+      const connectSec = $("#github-connect-section");
+      if (connectSec) connectSec.hidden = false;
     }
 
     if (data.githubTokenMasked) {
@@ -963,28 +1224,33 @@ async function loadSettings() {
 
     try {
       const authStatus = await api("/api/auth/status");
-      const oauthSection = $("#github-oauth-section");
-      if (oauthSection) {
-        oauthSection.hidden = !authStatus.oauthEnabled || Boolean(data.githubUser);
-      }
+      state.oauthEnabled = Boolean(authStatus.oauthEnabled);
     } catch {}
 
-    // Gemini
+    // AI Planner
     const geminiBadge = $("#gemini-status-badge");
     geminiBadge.className = "badge";
     if (data.hasGeminiKey) {
       geminiBadge.classList.add("ok");
-      geminiBadge.textContent = `✓ Sẵn sàng (${data.geminiModel})`;
+      geminiBadge.textContent = `✓ Gemini Flash (${data.geminiModel}) · 1.500 req/ngày`;
       $("#input-gemini-key").placeholder = `${data.geminiKeyMasked} (để trống để giữ nguyên)`;
+    } else if (data.hasGithubToken) {
+      geminiBadge.classList.add("ok");
+      geminiBadge.textContent = `✓ GitHub Models (gpt-4o-mini) · Mặc định`;
+      $("#input-gemini-key").placeholder =
+        "AQ.Ab8... hoặc AIzaSy... (để trống để dùng GitHub Models)";
     } else {
       geminiBadge.classList.add("warn");
-      geminiBadge.textContent = "Chưa có API key";
-      $("#input-gemini-key").placeholder = "AQ.Ab8... hoặc AIzaSy... (để trống để tắt planner)";
+      geminiBadge.textContent = "Chờ kết nối GitHub";
+      $("#input-gemini-key").placeholder = "AQ.Ab8... hoặc AIzaSy...";
     }
 
     if (data.geminiModel) {
       $("#select-gemini-model").value = data.geminiModel;
     }
+
+    // Roles section
+    renderRolesSection(data.policyRoles, data.canEditRoles, data.policyStatus);
 
     // Alert
     const alert = $("#settings-alert");
@@ -1022,7 +1288,14 @@ async function testGithubToken() {
       msgEl.hidden = false;
       if (res.ok) {
         msgEl.className = "test-msg ok small";
-        msgEl.textContent = `✓ Kết nối GitHub thành công: @${res.viewer.login} (ID: ${res.viewer.id})`;
+        msgEl.textContent = `✓ Đã kết nối thành công: @${res.viewer.login} (ID: ${res.viewer.id})`;
+        if (tokenVal) {
+          await api("/api/settings", { githubToken: tokenVal });
+          $("#input-github-token").value = "";
+          await loadSettings();
+          await syncSession();
+          await loadUserRepos(true);
+        }
       } else {
         msgEl.className = "test-msg err small";
         msgEl.textContent = `✗ Lỗi kiểm tra: ${res.error}`;
@@ -1033,6 +1306,59 @@ async function testGithubToken() {
       msgEl.textContent = `✗ Lỗi: ${err.message}`;
     }
   });
+}
+
+async function connectWithGhCli() {
+  const button = $("#btn-connect-gh-cli");
+  const feedback = $("#github-connect-feedback");
+  if (feedback) feedback.hidden = true;
+
+  await withBusy(button, async () => {
+    try {
+      const res = await api("/api/auth/gh-cli", {});
+      if (feedback) {
+        feedback.className = "test-msg ok small";
+        feedback.textContent = `✓ ${res.message}`;
+        feedback.hidden = false;
+      }
+      log("ok", res.message);
+      await loadSettings();
+      await syncSession();
+      await loadUserRepos(true);
+    } catch (err) {
+      if (feedback) {
+        feedback.className = "test-msg err small";
+        feedback.textContent = `✗ ${err.message}`;
+        feedback.hidden = false;
+      }
+    }
+  });
+}
+
+async function disconnectGithub() {
+  const confirmed = confirm("Bạn có chắc chắn muốn ngắt kết nối tài khoản GitHub này?");
+  if (!confirmed) return;
+  try {
+    await api("/api/auth/disconnect", {});
+    log("ok", "Đã ngắt kết nối GitHub");
+    state.userRepos = [];
+    state.items = [];
+    await loadSettings();
+    await syncSession();
+    if (state.session?.status === "ready") {
+      await loadItems();
+    } else {
+      $("#items-list")?.replaceChildren();
+      const countEpics = $("#count-epics");
+      const countStories = $("#count-stories");
+      const countTasks = $("#count-tasks");
+      if (countEpics) countEpics.textContent = "0";
+      if (countStories) countStories.textContent = "0";
+      if (countTasks) countTasks.textContent = "0";
+    }
+  } catch (err) {
+    logError("Ngắt kết nối thất bại", err);
+  }
 }
 
 async function testGeminiKey() {
@@ -1063,14 +1389,12 @@ async function testGeminiKey() {
 }
 
 async function saveSettings() {
-  const repo = $("#input-repo").value.trim();
   const githubToken = $("#input-github-token").value.trim();
   const geminiApiKey = $("#input-gemini-key").value.trim();
   const geminiModel = $("#select-gemini-model").value;
   const statusMsg = $("#save-status-msg");
 
   const patch = {};
-  if (repo) patch.repo = repo;
   if (githubToken) patch.githubToken = githubToken;
   if (geminiApiKey) patch.geminiApiKey = geminiApiKey;
   if (geminiModel) patch.geminiModel = geminiModel;
@@ -1085,12 +1409,265 @@ async function saveSettings() {
       log("ok", "Đã cập nhật cài đặt hệ thống");
       await loadSettings();
       await syncSession();
+      if (patch.githubToken) {
+        await loadUserRepos(true);
+      }
     } catch (err) {
       statusMsg.className = "save-status-msg err";
       statusMsg.textContent = `✗ Lỗi khi lưu: ${err.message}`;
       log("fail", "Lưu cài đặt thất bại", { text: err.message });
     }
   });
+}
+
+// ---------- roles management ----------
+
+function renderRolesSection(policyRoles, canEdit, policyStatus) {
+  const badge = $("#roles-status-badge");
+  const noPolicyMsg = $("#roles-no-policy-msg");
+  const contentSec = $("#roles-content-section");
+  if (!badge || !noPolicyMsg || !contentSec) return;
+
+  if (policyStatus === "missing" || !policyRoles) {
+    badge.className = "badge warn";
+    badge.textContent = "Chưa có Policy";
+    noPolicyMsg.hidden = false;
+    contentSec.hidden = true;
+    return;
+  }
+
+  noPolicyMsg.hidden = true;
+  contentSec.hidden = false;
+  badge.className = "badge " + (canEdit ? "ok" : "story");
+  badge.textContent = canEdit ? "✓ Quyền Maintainer" : "Chỉ xem (Read-only)";
+
+  state.canEditRoles = Boolean(canEdit);
+  state.rolesDraft = {
+    po: Array.isArray(policyRoles.po) ? [...policyRoles.po] : [],
+    dev: Array.isArray(policyRoles.dev) ? [...policyRoles.dev] : [],
+    maintainer: Array.isArray(policyRoles.maintainer) ? [...policyRoles.maintainer] : [],
+  };
+
+  renderRoleChips();
+}
+
+function renderRoleChips() {
+  const roles = ["po", "dev", "maintainer"];
+  for (const role of roles) {
+    const list = state.rolesDraft[role] || [];
+    const countBadge = $(`#${role}-count`);
+    if (countBadge) {
+      countBadge.textContent = `${list.length} ${role.toUpperCase()}`;
+    }
+
+    const container = $(`#${role}-members-list`);
+    if (!container) continue;
+    container.replaceChildren();
+
+    if (list.length === 0) {
+      container.append(
+        h(
+          "span",
+          { class: "muted small", style: "padding: 6px 0; font-style: italic" },
+          "(Chưa có thành viên nào)",
+        ),
+      );
+    } else {
+      for (const m of list) {
+        const chip = h("div", { class: "member-chip" });
+        const initial = (m.login || "?").slice(0, 2).toUpperCase();
+        const avatar = h("span", { class: "member-chip-avatar" }, initial);
+        const login = h("span", { class: "member-chip-login" }, `@${m.login}`);
+        const id = h("span", { class: "member-chip-id" }, `(#${m.id})`);
+        chip.append(avatar, login, id);
+
+        if (state.canEditRoles) {
+          const removeBtn = h(
+            "button",
+            {
+              class: "member-chip-remove",
+              type: "button",
+              title: `Xóa @${m.login} khỏi ${role.toUpperCase()}`,
+            },
+            "✕",
+          );
+          removeBtn.onclick = () => removeRoleMember(role, m.id);
+          chip.append(removeBtn);
+        }
+        container.append(chip);
+      }
+    }
+
+    // Toggle add row
+    const addRow = document.querySelector(`.member-add-row[data-role="${role}"]`);
+    if (addRow) {
+      addRow.hidden = !state.canEditRoles;
+    }
+  }
+
+  const saveBtn = $("#btn-save-roles");
+  if (saveBtn) {
+    saveBtn.hidden = !state.canEditRoles;
+  }
+}
+
+async function handleAddMember(role) {
+  if (!state.rolesDraft) state.rolesDraft = { po: [], dev: [], maintainer: [] };
+  if (!state.rolesDraft[role]) state.rolesDraft[role] = [];
+  const input = $(`#input-add-${role}`);
+  const btn = $(`#btn-add-${role}`);
+  if (!input) return;
+  let username = input.value.trim().replace(/^@/, "");
+  if (!username) {
+    const roleName =
+      role === "po"
+        ? "Product Owner (PO)"
+        : role === "dev"
+          ? "Developer (DEV)"
+          : "Maintainer (Quản trị)";
+    const promptVal = prompt(
+      `Nhập GitHub username để thêm vào vai trò ${roleName} (ví dụ: tadev999 hoặc octocat):`,
+    );
+    if (!promptVal || !promptVal.trim()) {
+      input.focus();
+      return;
+    }
+    username = promptVal.trim().replace(/^@/, "");
+  }
+
+  const runWithBtn = btn ? (fn) => withBusy(btn, fn) : (fn) => fn();
+  await runWithBtn(async () => {
+    try {
+      const res = await api("/api/users/resolve", { username });
+      if (state.rolesDraft[role].some((m) => m.id === res.id)) {
+        alert(`@${res.login} đã có trong danh sách ${role.toUpperCase()} rồi.`);
+        return;
+      }
+      state.rolesDraft[role].push({ id: res.id, login: res.login });
+      input.value = "";
+      renderRoleChips();
+      log("ok", `Đã thêm @${res.login} vào danh sách nháp của ${role.toUpperCase()}`);
+    } catch (err) {
+      alert(`Không thể thêm @${username}: ${err.message}`);
+    }
+  });
+}
+
+function removeRoleMember(role, memberId) {
+  if (role === "po" && state.rolesDraft.po.length <= 1) {
+    alert("Dự án phải có ít nhất 1 Product Owner (PO). Không thể xóa!");
+    return;
+  }
+  if (role === "maintainer" && state.rolesDraft.maintainer.length <= 1) {
+    alert("Dự án phải có ít nhất 1 Maintainer để quản trị. Không thể xóa!");
+    return;
+  }
+  state.rolesDraft[role] = state.rolesDraft[role].filter((m) => m.id !== memberId);
+  renderRoleChips();
+}
+
+async function handleSaveRoles() {
+  const btn = $("#btn-save-roles");
+  const msg = $("#save-roles-msg");
+  if (!btn) return;
+  if (msg) {
+    msg.className = "save-status-msg";
+    msg.textContent = "";
+  }
+
+  if (state.rolesDraft.po.length === 0) {
+    alert("Dự án phải có ít nhất 1 Product Owner (PO).");
+    return;
+  }
+  if (state.rolesDraft.maintainer.length === 0) {
+    alert("Dự án phải có ít nhất 1 Maintainer.");
+    return;
+  }
+
+  await withBusy(btn, async () => {
+    try {
+      log("pending", "Đang cập nhật phân quyền lên GitHub (.github/huddle60/policy.yml)...");
+      await api("/api/policy/roles", { roles: state.rolesDraft });
+      if (msg) {
+        msg.className = "save-status-msg ok";
+        msg.textContent = "✓ Đã cập nhật phân quyền lên GitHub!";
+      }
+      log("ok", "Đã cập nhật chính sách phân quyền thành công trên GitHub");
+      await syncSession();
+      await loadSettings();
+    } catch (err) {
+      if (msg) {
+        msg.className = "save-status-msg err";
+        msg.textContent = `✗ Lỗi khi lưu: ${err.message}`;
+      }
+      log("fail", "Cập nhật phân quyền thất bại", { text: err.message });
+    }
+  });
+}
+
+function updateRepoInitBanner() {
+  const banner = $("#repo-init-banner");
+  if (!banner) return;
+  const session = state.session;
+  if (!session || !session.repo) {
+    banner.hidden = true;
+    return;
+  }
+  const repoStr = `${session.repo.owner}/${session.repo.repo}`;
+  const isMissingPolicy =
+    session.missing?.includes("missing_policy") ||
+    session.policyStatus === "missing" ||
+    (state.settings && state.settings.policyStatus === "missing");
+
+  if (!isMissingPolicy) {
+    banner.hidden = true;
+    return;
+  }
+
+  banner.hidden = false;
+  const nameEl = $("#banner-repo-name");
+  if (nameEl) nameEl.textContent = repoStr;
+
+  const iconEl = $("#banner-init-icon");
+  const titleEl = $("#banner-init-title");
+  const descEl = $("#banner-init-desc");
+  const btnInit = $("#btn-banner-init-repo");
+  const btnViewGh = $("#btn-banner-view-github");
+  const btnLoginMaintainer = $("#btn-banner-login-maintainer");
+
+  // Determine if viewer has write/admin rights
+  const canInit = Boolean(session.canInitRepo);
+
+  if (canInit) {
+    banner.classList.remove("info-mode");
+    if (iconEl) iconEl.textContent = "⚠️";
+    if (titleEl) {
+      titleEl.innerHTML = `Kho lưu trữ <code id="banner-repo-name">${repoStr}</code> chưa được kích hoạt chuẩn AI-DLC.`;
+    }
+    if (descEl) {
+      descEl.innerHTML = `Chưa có nhãn chuẩn <code>huddle60:*</code>, nhánh bằng chứng <code>huddle60-evidence</code> hoặc file <code>.github/huddle60/policy.yml</code>.`;
+    }
+    if (btnInit) btnInit.hidden = false;
+    if (btnViewGh) btnViewGh.hidden = true;
+    if (btnLoginMaintainer) btnLoginMaintainer.hidden = true;
+  } else {
+    banner.classList.add("info-mode");
+    if (iconEl) iconEl.textContent = "💡";
+    if (titleEl) {
+      titleEl.innerHTML = `Kho lưu trữ <code id="banner-repo-name">${repoStr}</code> chưa thiết lập quy trình AI-DLC.`;
+    }
+    if (descEl) {
+      descEl.innerHTML = `Dự án này chưa kích hoạt bảng quy trình Huddle60. Bạn có thể chọn repository khác từ menu trên hoặc xem mã nguồn trên GitHub.`;
+    }
+    if (btnInit) btnInit.hidden = true;
+    if (btnViewGh) {
+      btnViewGh.href = session.repo.url || `https://github.com/${repoStr}`;
+      btnViewGh.hidden = false;
+    }
+    if (btnLoginMaintainer) {
+      btnLoginMaintainer.hidden = Boolean(session.viewer);
+    }
+  }
 }
 
 async function initRepository() {
@@ -1105,7 +1682,10 @@ async function initRepository() {
   });
   if (confirm !== "ok") return;
 
-  await withBusy($("#btn-init-repo"), async () => {
+  const btn = $("#btn-banner-init-repo") || $("#btn-init-repo");
+  const runWithBusy = btn ? (fn) => withBusy(btn, fn) : (fn) => fn();
+
+  await runWithBusy(async () => {
     const update = log("pending", "Đang khởi tạo Repository…");
     try {
       const res = await api("/api/repo/init", {});
@@ -1144,11 +1724,9 @@ async function switchRepository(repo) {
     await api("/api/settings", { repo });
     log("ok", `Đã chuyển sang repository: ${repo}`);
     await syncSession();
+    switchView("items");
     if (state.session?.status === "ready") {
       await loadItems();
-    } else {
-      switchView("settings");
-      await loadSettings();
     }
   } catch (err) {
     logError(`Chuyển sang ${repo} thất bại`, err);
@@ -1159,10 +1737,34 @@ function renderRepoSwitcher() {
   const select = $("#repo-switcher-select");
   if (!select) return;
   const session = state.session || {};
-  const currentRepoStr = session.repo ? `${session.repo.owner}/${session.repo.repo}` : "";
-  const recentRepos = session.recentRepos || (currentRepoStr ? [currentRepoStr] : []);
+  const isConnected = Boolean(
+    session.viewer ||
+    session.status === "ready" ||
+    session.tenant ||
+    session.repo ||
+    state.userRepos?.length ||
+    session.recentRepos?.length,
+  );
 
   select.innerHTML = "";
+
+  // 1. If not connected, do NOT show recent repos or allow switching
+  if (!isConnected) {
+    const unauthOpt = document.createElement("option");
+    unauthOpt.value = "";
+    unauthOpt.textContent = "Chưa có repository";
+    unauthOpt.selected = true;
+    unauthOpt.disabled = true;
+    select.appendChild(unauthOpt);
+    select.disabled = true;
+    const repoGhLink = $("#repo-gh-link");
+    if (repoGhLink) repoGhLink.hidden = true;
+    return;
+  }
+
+  select.disabled = false;
+  const currentRepoStr = session.repo ? `${session.repo.owner}/${session.repo.repo}` : "";
+  const recentRepos = session.recentRepos || (currentRepoStr ? [currentRepoStr] : []);
 
   if (!currentRepoStr) {
     const defaultOpt = document.createElement("option");
@@ -1173,21 +1775,21 @@ function renderRepoSwitcher() {
     select.appendChild(defaultOpt);
   }
 
-  // 1. Recent repos group
+  // 2. Recent repos group
   if (recentRepos.length > 0) {
     const recentGroup = document.createElement("optgroup");
     recentGroup.label = "🕒 Dự án gần đây";
     for (const r of recentRepos) {
       const opt = document.createElement("option");
       opt.value = r;
-      opt.textContent = `📁 ${r}`;
+      opt.textContent = r;
       if (r === currentRepoStr) opt.selected = true;
       recentGroup.appendChild(opt);
     }
     select.appendChild(recentGroup);
   }
 
-  // 2. All repositories from GitHub
+  // 3. All repositories from GitHub
   if (state.loadingRepos) {
     const loadingGroup = document.createElement("optgroup");
     loadingGroup.label = "📂 Tất cả Repositories (GitHub)";
@@ -1203,15 +1805,14 @@ function renderRepoSwitcher() {
     for (const r of state.userRepos) {
       const opt = document.createElement("option");
       opt.value = r.fullName;
-      const icon = r.isPrivate ? "🔒" : "🌐";
-      opt.textContent = `${icon} ${r.fullName}`;
+      opt.textContent = r.isPrivate ? `🔒 ${r.fullName}` : r.fullName;
       if (r.fullName === currentRepoStr) opt.selected = true;
       allGroup.appendChild(opt);
     }
     select.appendChild(allGroup);
   }
 
-  // 3. Action options
+  // 4. Action options
   const actionGroup = document.createElement("optgroup");
   actionGroup.label = "Thao tác";
 
@@ -1277,11 +1878,14 @@ async function syncSession() {
   try {
     state.session = await api("/api/session");
   } catch (error) {
-    fatal(
-      error.code === "E_TOKEN"
-        ? "Session token không hợp lệ (app đã khởi động lại?).\nMở URL mới trong terminal."
-        : `${error.code ?? "E"}: ${error.message}`,
-    );
+    if (error.code === "E_TOKEN") {
+      sessionStorage.removeItem(TOKEN_KEY);
+      fatal(
+        "Session token không hợp lệ (server có thể đã khởi động lại).\nVui lòng tải lại trang (F5) hoặc mở URL có token từ terminal.",
+      );
+      return;
+    }
+    fatal(`${error.code ?? "E"}: ${error.message}`);
     return;
   }
 
@@ -1291,25 +1895,28 @@ async function syncSession() {
   const tenantBadge = $("#tenant-badge");
   if (tenantBadge) {
     if (session.tenant) {
-      tenantBadge.textContent = session.tenant;
+      tenantBadge.textContent = `@${session.tenant}`;
+      tenantBadge.title = `Không gian làm việc: ${session.tenant}`;
       tenantBadge.hidden = false;
+      document.title = `huddle60 · ${session.tenant}`;
     } else {
       tenantBadge.hidden = true;
+      document.title = "huddle60";
     }
   }
 
-  // Tabs enable/disable
+  // Tabs enable/disable - navigation tabs should always be clickable
   const itemsTab = document.querySelector('.tab[data-view="items"]');
   const planTab = document.querySelector('.tab[data-view="plan"]');
-  if (itemsTab) itemsTab.disabled = !isReady;
-  if (planTab) planTab.disabled = !isReady;
+  if (itemsTab) itemsTab.disabled = false;
+  if (planTab) planTab.disabled = false;
 
   // Render repo switcher dropdown with all repos
   renderRepoSwitcher();
 
-  // If connected to GitHub and haven't fetched all repos yet, load in background
+  // If tenant, repo, or viewer exists and haven't fetched all repos yet, load in background
   if (
-    (session.viewer || session.status === "ready") &&
+    (session.viewer || session.status === "ready" || session.tenant || session.repo) &&
     !state.userRepos.length &&
     !state.loadingRepos
   ) {
@@ -1318,7 +1925,10 @@ async function syncSession() {
 
   const repoGhLink = $("#repo-gh-link");
   if (repoGhLink) {
-    if (session.repo) {
+    const isConnected = Boolean(
+      session.viewer || session.status === "ready" || session.tenant || session.repo,
+    );
+    if (session.repo && isConnected) {
       repoGhLink.href = session.repo.url;
       repoGhLink.hidden = false;
     } else {
@@ -1326,17 +1936,18 @@ async function syncSession() {
     }
   }
 
+  const isGuest = !session.viewer || (!hasRole("po") && !hasRole("dev"));
   if (session.viewer) {
     $("#viewer").textContent = `@${session.viewer.login}`;
   } else {
-    $("#viewer").textContent = "Chưa kết nối";
+    $("#viewer").textContent = "👁️ Khách vãng lai";
   }
 
   $("#roles").replaceChildren(
     ...(session.roles && session.roles.length
       ? session.roles.map((role) => h("span", { class: "badge story" }, role))
       : isReady
-        ? [h("span", { class: "muted" }, "Chưa có vai trò")]
+        ? [h("span", { class: "badge story" }, "Chỉ xem (Read-only)")]
         : [h("span", { class: "badge warn" }, "Cần cài đặt")]),
   );
 
@@ -1344,18 +1955,65 @@ async function syncSession() {
   dot.classList.toggle("on", Boolean(session.planner));
   dot.title = session.planner
     ? `planner: ${session.planner.model}`
-    : "planner off (GEMINI_API_KEY)";
+    : "planner off (cần kết nối GitHub hoặc Gemini Key)";
 
   if (!session.planner) {
     $("#plan-generate").disabled = true;
-    $("#plan-hint").textContent = "Gemini chưa cấu hình: vào Cài đặt để thêm API Key";
+    $("#plan-hint").textContent = "Chưa kết nối AI: hãy kết nối GitHub để dùng miễn phí";
   } else {
     $("#plan-generate").disabled = false;
-    $("#plan-hint").textContent = "";
+    const providerName = session.planner.provider === "gemini" ? "Google Gemini" : "GitHub Models";
+    $("#plan-hint").textContent = `✨ Đang dùng AI: ${session.planner.model} (${providerName})`;
+  }
+
+  updateRepoInitBanner();
+
+  if (session.policyRoles !== undefined) {
+    renderRolesSection(session.policyRoles, session.canEditRoles, session.policyStatus);
+  }
+
+  const guestBanner = $("#guest-mode-banner");
+  if (guestBanner) {
+    guestBanner.hidden = !(isReady && isGuest);
   }
 
   if (!isReady) {
-    switchView("settings");
+    const list = $("#items-list");
+    if (list) {
+      list.replaceChildren(
+        h(
+          "tr",
+          {},
+          h(
+            "td",
+            { colspan: 6, style: "text-align: center; padding: 48px 16px;" },
+            h(
+              "div",
+              {
+                style:
+                  "max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; gap: 12px;",
+              },
+              h("div", { style: "font-size: 32px;" }, "📂"),
+              h("h3", { style: "margin: 0;" }, "Chưa kết nối Repository"),
+              h(
+                "p",
+                { class: "small muted", style: "margin: 0; line-height: 1.5;" },
+                "Không gian làm việc này chưa chọn kho lưu trữ nào. Vui lòng kết nối GitHub hoặc nhập tên repository để bắt đầu quản lý công việc.",
+              ),
+              h(
+                "button",
+                {
+                  class: "btn primary",
+                  onclick: () => switchView("settings"),
+                  style: "margin-top: 8px;",
+                },
+                "⚙️ Mở Cài đặt để kết nối",
+              ),
+            ),
+          ),
+        ),
+      );
+    }
   } else {
     if (!hasRole("po") && !hasRole("dev")) {
       state.filter = "all";
@@ -1364,6 +2022,25 @@ async function syncSession() {
     }
     await loadItems();
   }
+}
+
+function getTargetRepoFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const qRepo = params.get("repo");
+  if (qRepo && qRepo.trim()) {
+    return qRepo.trim();
+  }
+  const parts = window.location.pathname.split("/").filter(Boolean);
+  if (parts.length === 2 && parts[0] !== "api") {
+    return `${parts[0]}/${parts[1]}`;
+  }
+  if (parts.length === 1 && !["app", "landing", "index.html"].includes(parts[0])) {
+    const tenant = state.session?.tenant || readTenant();
+    if (tenant && parts[0] !== tenant) {
+      return `${tenant}/${parts[0]}`;
+    }
+  }
+  return null;
 }
 
 async function boot() {
@@ -1389,11 +2066,13 @@ async function boot() {
     state.query = event.target.value;
     renderItems();
   });
-  $("#refresh").addEventListener("click", loadItems);
+  $("#refresh").addEventListener("click", () => loadItems(true));
+  $("#btn-guest-login")?.addEventListener("click", () => switchView("settings"));
   $("#log-clear").addEventListener("click", () => $("#log").replaceChildren());
   $("#plan-form").addEventListener("submit", generatePlan);
   $("#refine-form").addEventListener("submit", refinePlan);
   $("#create-btn").addEventListener("click", createIssues);
+  initPlanAttachments();
 
   // Repo switcher handler
   $("#repo-switcher-select")?.addEventListener("change", async (event) => {
@@ -1408,9 +2087,19 @@ async function boot() {
       return;
     }
     if (value === "__add__") {
-      switchView("settings");
-      $("#input-repo").focus();
       event.target.value = current;
+      const tenant = state.session?.tenant;
+      const promptMsg = tenant
+        ? `Nhập tên Repository của không gian @${tenant} (ví dụ: ${tenant}/ten-repo hoặc ten-repo):`
+        : "Nhập tên Repository mới trên GitHub (dạng: owner/repo):";
+      const customRepo = prompt(promptMsg);
+      if (customRepo && customRepo.trim()) {
+        let repoToSwitch = customRepo.trim();
+        if (tenant && !repoToSwitch.includes("/")) {
+          repoToSwitch = `${tenant}/${repoToSwitch}`;
+        }
+        await switchRepository(repoToSwitch);
+      }
       return;
     }
     if (value && value !== current) {
@@ -1420,9 +2109,49 @@ async function boot() {
 
   // Settings handlers
   $("#btn-test-github").addEventListener("click", testGithubToken);
+  $("#btn-connect-gh-cli")?.addEventListener("click", connectWithGhCli);
+  $("#btn-disconnect-github")?.addEventListener("click", disconnectGithub);
+  $("#btn-login-github")?.addEventListener("click", (e) => {
+    if (!state.oauthEnabled) {
+      e.preventDefault();
+      alert(
+        "Tính năng Đăng nhập GitHub OAuth chưa cấu hình GITHUB_CLIENT_ID trên server.\n\n" +
+          "👉 Mẹo nhanh: Bạn có thể bấm nút '⚡ Tự động kết nối từ GitHub CLI (gh)' ngay bên cạnh để kết nối 1-click không cần cấu hình gì!\n" +
+          "Hoặc nhập Personal Access Token (PAT) bên dưới.",
+      );
+    }
+  });
   $("#btn-test-gemini").addEventListener("click", testGeminiKey);
   $("#btn-save-settings").addEventListener("click", saveSettings);
-  $("#btn-init-repo").addEventListener("click", initRepository);
+  $("#btn-banner-init-repo")?.addEventListener("click", initRepository);
+  $("#btn-banner-login-maintainer")?.addEventListener("click", () => switchView("settings"));
+  $("#btn-init-repo")?.addEventListener("click", initRepository);
+
+  // Role management handlers
+  $("#btn-add-po")?.addEventListener("click", () => handleAddMember("po"));
+  $("#btn-add-dev")?.addEventListener("click", () => handleAddMember("dev"));
+  $("#btn-add-maintainer")?.addEventListener("click", () => handleAddMember("maintainer"));
+
+  $("#input-add-po")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleAddMember("po");
+    }
+  });
+  $("#input-add-dev")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleAddMember("dev");
+    }
+  });   
+  $("#input-add-maintainer")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleAddMember("maintainer");
+    }
+  });
+
+  $("#btn-save-roles")?.addEventListener("click", handleSaveRoles);
 
   // Spec editor handlers
   $("#spec-btn-ai-refine").addEventListener("click", handleAiRefineSpec);
@@ -1431,9 +2160,35 @@ async function boot() {
   $("#spec-modal-close-x").addEventListener("click", () => $("#spec-dialog").close());
 
   await syncSession();
+  loadSettings().catch(() => {});
   if (state.session?.status === "ready") {
     log("ok", `Đã kết nối · @${state.session.viewer.login}`);
   }
+
+  // Check URL for target repo (e.g. /skill_bento or /tadev999/skill_bento or ?repo=...)
+  const targetCandidate = getTargetRepoFromUrl();
+  if (targetCandidate && state.session?.status === "ready") {
+    let fullRepo = targetCandidate;
+    if (!fullRepo.includes("/")) {
+      const owner =
+        state.session.tenant || state.session.repo?.owner || state.session.viewer?.login;
+      if (owner) {
+        fullRepo = `${owner}/${fullRepo}`;
+      }
+    }
+    const currentRepoStr = state.session.repo
+      ? `${state.session.repo.owner}/${state.session.repo.repo}`
+      : "";
+    if (
+      fullRepo &&
+      fullRepo.includes("/") &&
+      fullRepo.toLowerCase() !== currentRepoStr.toLowerCase()
+    ) {
+      await switchRepository(fullRepo);
+    }
+  }
+
+  window.addEventListener("hashchange", focusTargetTask);
 }
 
 boot();

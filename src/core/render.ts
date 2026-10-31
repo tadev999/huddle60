@@ -73,7 +73,7 @@ export function renderNodeBody(
   } else {
     sections.push([SECTIONS.acRefs, node.acRefs.join(", ")]);
   }
-  sections.push([SECTIONS.technicalRefs, ""]);
+  sections.push([SECTIONS.technicalRefs, record.technicalRefs ?? ""]);
   sections.push([SECTIONS.risks, bulletList(node.riskNotes, "")]);
 
   const rendered = sections

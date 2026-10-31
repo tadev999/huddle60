@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>huddle60</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css" />
-    <script type="module" src="/app.js"></script>
+    <link rel="stylesheet" href="/styles.css?v=20261031_3" />
+    <script type="module" src="/app.js?v=20261031_5"></script>
   </head>
   <body>
     <header class="topbar">
@@ -16,16 +16,28 @@
           <span id="tenant-badge" class="badge ok" hidden></span>
         </div>
         <div class="repo-switcher">
-          <span class="repo-icon" title="Dự án đang chọn">📁</span>
+          <svg
+            class="repo-svg-icon"
+            viewBox="0 0 16 16"
+            width="14"
+            height="14"
+            fill="currentColor"
+            aria-hidden="true"
+          >
+            <path
+              d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7.75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 12.25a.25.25 0 0 1 .25-.25h3.5a.25.25 0 0 1 .25.25v3.25a.25.25 0 0 1-.4.2l-1.45-1.087a.249.249 0 0 0-.3 0L5.4 15.7a.25.25 0 0 1-.4-.2Z"
+            ></path>
+          </svg>
           <select id="repo-switcher-select" title="Chuyển đổi Repository (Dự án)">
             <option value="" disabled selected>Đang tải...</option>
           </select>
           <a
             id="repo-gh-link"
-            class="btn ghost tiny"
+            class="repo-ext-link"
             target="_blank"
             rel="noopener noreferrer"
             title="Mở repository trên GitHub"
+            hidden
             >↗</a
           >
         </div>
@@ -43,6 +55,57 @@
     </header>
 
     <main>
+      <div id="repo-init-banner" class="repo-init-banner" hidden>
+        <div class="banner-content">
+          <span id="banner-init-icon" class="banner-icon">⚠️</span>
+          <div class="banner-text">
+            <div>
+              <strong id="banner-init-title"
+                >Kho lưu trữ <code id="banner-repo-name">owner/repo</code> chưa được kích hoạt chuẩn
+                AI-DLC.</strong
+              >
+            </div>
+            <div id="banner-init-desc" class="small muted">
+              Chưa có nhãn chuẩn <code>huddle60:*</code>, nhánh bằng chứng
+              <code>huddle60-evidence</code> hoặc file <code>.github/huddle60/policy.yml</code>.
+            </div>
+          </div>
+        </div>
+        <div class="banner-actions">
+          <button id="btn-banner-init-repo" class="btn primary" type="button">
+            ⚡ Khởi tạo ngay trong 1-click
+          </button>
+          <a
+            id="btn-banner-view-github"
+            class="btn ghost small"
+            href="#"
+            target="_blank"
+            rel="noopener noreferrer"
+            hidden
+          >
+            Xem trên GitHub ↗
+          </a>
+          <button id="btn-banner-login-maintainer" class="btn ghost small" type="button" hidden>
+            Đăng nhập Maintainer
+          </button>
+        </div>
+      </div>
+
+      <div id="guest-mode-banner" class="guest-mode-banner" hidden>
+        <div class="banner-content">
+          <span class="banner-icon">👁️</span>
+          <div class="banner-text">
+            <span
+              >Bạn đang xem công việc ở <strong>Chế độ Khách (Read-only)</strong>. Mọi người đều có
+              thể xem đặc tả và bấm <code>Context</code> để code với AI.</span
+            >
+          </div>
+        </div>
+        <button id="btn-guest-login" class="btn ghost small" type="button">
+          🔑 Đăng nhập GitHub
+        </button>
+      </div>
+
       <section id="view-items" class="view">
         <div class="toolbar">
           <div class="filters" id="filters">
@@ -92,10 +155,27 @@
             <label for="plan-request">Mô tả</label>
             <textarea
               id="plan-request"
-              rows="12"
+              rows="10"
               maxlength="20000"
               placeholder="Mục tiêu, người dùng, phạm vi và ràng buộc"
             ></textarea>
+            <label for="plan-links">Tài liệu & Liên kết tham chiếu <span class="muted">(Figma, PRD, Google Docs, Swagger... Mỗi link 1 dòng)</span></label>
+            <textarea
+              id="plan-links"
+              rows="3"
+              maxlength="2000"
+              placeholder="https://www.figma.com/design/...&#10;https://docs.google.com/document/...&#10;https://api.myproject.com/swagger"
+            ></textarea>
+            <label>Tệp đính kèm phân tích <span class="muted">(Ảnh mockup, PDF tài liệu, bảng CSV, TXT... Kéo thả hoặc Ctrl+V)</span></label>
+            <div id="plan-dropzone" class="plan-dropzone">
+              <input id="plan-file-input" type="file" accept="image/*,application/pdf,.csv,.txt,.json,.md" multiple hidden />
+              <div class="dropzone-prompt">
+                <span class="dropzone-icon">📎</span>
+                <span class="dropzone-text">Kéo thả tệp vào đây, <button type="button" id="plan-browse-btn" class="link-btn">chọn tệp</button> hoặc dán <code>Ctrl+V</code></span>
+                <span class="muted small">(Ảnh PNG/JPG/WebP, PDF, CSV, TXT, MD · Tối đa 10 tệp · 10MB/tệp)</span>
+              </div>
+              <div id="plan-attachment-previews" class="attachment-previews" hidden></div>
+            </div>
             <div class="row">
               <button id="plan-generate" class="btn primary" type="submit">Tạo kế hoạch</button>
               <span id="plan-hint" class="muted small"></span>
@@ -151,123 +231,199 @@
             </p>
 
             <div id="github-user-row" class="user-row" hidden>
-              <span class="avatar-icon">👤</span>
-              <div>
-                <strong id="github-user-login"></strong>
-                <span id="github-user-id" class="muted small"></span>
+              <div class="user-info">
+                <span class="avatar-icon">👤</span>
+                <div>
+                  <strong id="github-user-login"></strong>
+                  <span id="github-user-id" class="muted small"></span>
+                </div>
               </div>
-            </div>
-
-            <div id="github-oauth-section" class="oauth-section" hidden>
-              <a id="btn-login-github" href="/api/auth/github" class="btn primary oauth-btn">
-                🔑 Đăng nhập nhanh với GitHub
-              </a>
-              <div class="divider small muted">
-                <span>hoặc sử dụng Personal Access Token bên dưới</span>
-              </div>
-            </div>
-
-            <label for="input-github-token">
-              Personal Access Token (PAT)
-              <span class="muted small">(cần quyền <code>repo</code>)</span>
-            </label>
-            <div class="input-row">
-              <input
-                id="input-github-token"
-                type="password"
-                placeholder="ghp_... (để trống để giữ nguyên token hiện tại)"
-                autocomplete="off"
-              />
-              <button id="btn-test-github" class="btn" type="button">Kiểm tra</button>
-            </div>
-            <div id="github-test-msg" class="test-msg small" hidden></div>
-            <p class="hint muted small">
-              💡 Bạn có thể tạo token mới tại
-              <a
-                href="https://github.com/settings/tokens/new?scopes=repo&description=huddle60"
-                target="_blank"
-                rel="noopener noreferrer"
-                >GitHub Settings &gt; Developer Settings &gt; Personal access tokens</a
+              <button
+                id="btn-disconnect-github"
+                class="btn ghost tiny"
+                type="button"
+                title="Ngắt kết nối tài khoản này"
               >
-              (chọn quyền <strong>repo</strong>).
-            </p>
-          </div>
-
-          <div class="card settings-card">
-            <div class="card-head">
-              <h2><span class="muted">02</span> Kho lưu trữ (Repository)</h2>
-              <span id="repo-status-badge" class="badge">Chưa chọn</span>
-            </div>
-            <p class="desc">
-              Repository trên GitHub mà huddle60 sẽ quản lý. Bạn có thể làm việc với bất kỳ repo nào
-              mà bạn có quyền truy cập.
-            </p>
-
-            <label for="input-repo">Tên Repository (dạng: <code>owner/name</code>)</label>
-            <input
-              id="input-repo"
-              type="text"
-              list="repo-datalist"
-              placeholder="ví dụ: tadev999/huddle60_test"
-            />
-            <datalist id="repo-datalist"></datalist>
-            <div id="repo-source-hint" class="hint muted small"></div>
-
-            <div id="recent-repos-wrap" class="recent-repos-section" hidden>
-              <label class="small muted">Kho lưu trữ gần đây (bấm để chuyển nhanh):</label>
-              <div id="recent-repos-chips" class="recent-chips"></div>
-            </div>
-
-            <div id="repo-init-card" class="callout warning init-card" hidden>
-              <strong>⚠️ Kho lưu trữ chưa được khởi tạo AI-DLC</strong>
-              <p>
-                Kho lưu trữ này chưa có nhãn chuẩn <code>huddle60:*</code>, nhánh bằng chứng
-                <code>huddle60-evidence</code> hoặc file <code>.github/huddle60/policy.yml</code>.
-              </p>
-              <button id="btn-init-repo" class="btn primary" type="button">
-                ⚡ Khởi tạo Repository ngay
+                🚪 Đổi tài khoản khác
               </button>
             </div>
+
+            <div id="github-connect-section">
+              <div class="connect-buttons-row">
+                <a id="btn-login-github" href="/api/auth/github" class="btn primary oauth-btn">
+                  🔑 Đăng nhập nhanh với GitHub (OAuth)
+                </a>
+                <button id="btn-connect-gh-cli" class="btn secondary cli-btn" type="button">
+                  ⚡ Tự động kết nối từ GitHub CLI (gh)
+                </button>
+              </div>
+              <div id="github-connect-feedback" class="test-msg small" hidden></div>
+
+              <div class="divider small muted">
+                <span>hoặc nhập Personal Access Token thủ công</span>
+              </div>
+
+              <div class="pat-head-row">
+                <label for="input-github-token">
+                  Personal Access Token (PAT)
+                  <span class="muted small">(cần quyền <code>repo,read:user</code>)</span>
+                </label>
+                <a
+                  href="https://github.com/settings/tokens/new?scopes=repo,read:user&description=huddle60"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="btn ghost tiny"
+                  title="Mở trang tạo token trên GitHub với quyền đã chọn sẵn"
+                >
+                  ↗ Tạo PAT 1-Click trên GitHub
+                </a>
+              </div>
+              <div class="input-row">
+                <input
+                  id="input-github-token"
+                  type="password"
+                  placeholder="ghp_... (dán token vào đây)"
+                  autocomplete="off"
+                />
+                <button id="btn-test-github" class="btn" type="button">Kiểm tra & Lưu</button>
+              </div>
+              <div id="github-test-msg" class="test-msg small" hidden></div>
+            </div>
           </div>
 
           <div class="card settings-card">
             <div class="card-head">
-              <h2><span class="muted">03</span> Gemini AI Planner</h2>
-              <span id="gemini-status-badge" class="badge">Chưa có key</span>
+              <h2><span class="muted">02</span> Mô hình AI Planner</h2>
+              <span id="gemini-status-badge" class="badge">Đang tải...</span>
             </div>
-            <p class="desc">
+            <p id="ai-provider-desc" class="desc">
               AI model dùng để phân tích yêu cầu từ PO, đề xuất cây Epic/Story/Task và các câu hỏi
               làm rõ Given/When/Then.
             </p>
 
-            <label for="input-gemini-key">Gemini API Key</label>
-            <div class="input-row">
-              <input
-                id="input-gemini-key"
-                type="password"
-                placeholder="AQ.Ab8... hoặc AIzaSy... (để trống để giữ nguyên key hiện tại)"
-                autocomplete="off"
-              />
-              <button id="btn-test-gemini" class="btn" type="button">Kiểm tra Key</button>
+            <div id="ai-default-banner" class="callout ok small">
+              <strong>✨ Mặc định: Dùng luôn GitHub Models (GPT-4o-mini)</strong>
+              <p>
+                Được kích hoạt tự động qua chính GitHub Token của bạn (miễn phí sẵn có). Bạn có thể
+                tạo kế hoạch và tinh chỉnh đặc tả ngay lập tức mà không cần cấu hình thêm!
+              </p>
             </div>
-            <div id="gemini-test-msg" class="test-msg small" hidden></div>
-            <p class="hint muted small">
-              Lấy API key miễn phí tại
-              <a
-                href="https://aistudio.google.com/app/apikey"
-                target="_blank"
-                rel="noopener noreferrer"
-                >Google AI Studio</a
-              >.
+
+            <div class="ai-upgrade-section">
+              <h3 style="font-size: 13px; margin: 16px 0 6px 0">
+                ⚡ Nâng cấp hạn mức lớn hơn (1.500 lượt/ngày với Gemini Flash)
+              </h3>
+              <p class="desc small">
+                Nếu bạn cần tần suất lập kế hoạch liên tục cho team lớn, bạn có thể kết nối thêm
+                Gemini API Key:
+              </p>
+
+              <div class="callout warning small" style="margin-bottom: 12px">
+                🛡️ <strong>Cam kết an tâm:</strong> Key Google AI Studio là
+                <strong>hoàn toàn miễn phí, KHÔNG yêu cầu nhập thẻ tín dụng</strong>, và chỉ được
+                lưu cục bộ trên máy chủ của bạn (không bao giờ gửi về bên thứ ba).
+              </div>
+
+              <label for="input-gemini-key">Gemini API Key (Tùy chọn)</label>
+              <div class="input-row">
+                <input
+                  id="input-gemini-key"
+                  type="password"
+                  placeholder="AQ.Ab8... hoặc AIzaSy... (để trống để dùng GitHub Models)"
+                  autocomplete="off"
+                />
+                <button id="btn-test-gemini" class="btn" type="button">Kiểm tra Key</button>
+              </div>
+              <div id="gemini-test-msg" class="test-msg small" hidden></div>
+              <p class="hint muted small">
+                💡 Lấy API key miễn phí (không cần thẻ tín dụng) tại
+                <a
+                  href="https://aistudio.google.com/app/apikey"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >Google AI Studio</a
+                >.
+              </p>
+
+              <label for="select-gemini-model">Model Gemini</label>
+              <select id="select-gemini-model">
+                <option value="gemini-3.8-flash">gemini-3.8-flash (Mới nhất, khuyên dùng)</option>
+                <option value="gemini-3.7-flash">gemini-3.7-flash</option>
+                <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="card settings-card">
+            <div class="card-head">
+              <h2><span class="muted">03</span> Đội ngũ & Phân quyền AI-DLC</h2>
+              <span id="roles-status-badge" class="badge">Đang tải...</span>
+            </div>
+            <p class="desc">
+              Chính sách phân quyền RBAC được lưu trực tiếp tại file <code>.github/huddle60/policy.yml</code> trên GitHub. Chỉ Maintainer của dự án mới có quyền lưu thay đổi.
             </p>
 
-            <label for="select-gemini-model">Model AI</label>
-            <select id="select-gemini-model">
-              <option value="gemini-3.8-flash">gemini-3.8-flash (Mới nhất, khuyên dùng)</option>
-              <option value="gemini-3.7-flash">gemini-3.7-flash</option>
-              <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-              <option value="gemini-2.5-pro">gemini-2.5-pro</option>
-            </select>
+            <div id="roles-no-policy-msg" class="callout warning small" hidden>
+              ⚠️ Kho lưu trữ hiện tại chưa kích hoạt chuẩn AI-DLC. Hãy khởi tạo kho lưu trữ trước để thiết lập thành viên.
+            </div>
+
+            <div id="roles-content-section">
+              <!-- PO Group -->
+              <div class="role-group">
+                <div class="role-group-header">
+                  <div>
+                    <strong class="role-title">👑 Product Owner (PO)</strong>
+                    <p class="desc small">Có thẩm quyền cao nhất về yêu cầu: phê duyệt kế hoạch (Approve), kích hoạt Story vào trạng thái Ready và nghiệm thu hoàn thành.</p>
+                  </div>
+                  <span id="po-count" class="badge story">0 PO</span>
+                </div>
+                <div id="po-members-list" class="members-chips"></div>
+                <div class="member-add-row" data-role="po">
+                  <input type="text" id="input-add-po" placeholder="Nhập username GitHub (ví dụ: tadev999 hoặc @alice)..." autocomplete="off" />
+                  <button type="button" id="btn-add-po" class="btn secondary tiny">+ Thêm PO</button>
+                </div>
+              </div>
+
+              <!-- DEV Group -->
+              <div class="role-group">
+                <div class="role-group-header">
+                  <div>
+                    <strong class="role-title">💻 Developer (DEV)</strong>
+                    <p class="desc small">Thành viên kỹ thuật: nhận nhiệm vụ, claim task, triển khai mã nguồn, gửi Pull Request và gửi bằng chứng nghiệm thu.</p>
+                  </div>
+                  <span id="dev-count" class="badge task">0 DEV</span>
+                </div>
+                <div id="dev-members-list" class="members-chips"></div>
+                <div class="member-add-row" data-role="dev">
+                  <input type="text" id="input-add-dev" placeholder="Nhập username GitHub (ví dụ: bob hoặc @charlie)..." autocomplete="off" />
+                  <button type="button" id="btn-add-dev" class="btn secondary tiny">+ Thêm DEV</button>
+                </div>
+              </div>
+
+              <!-- Maintainer Group -->
+              <div class="role-group">
+                <div class="role-group-header">
+                  <div>
+                    <strong class="role-title">🛡️ Maintainer (Quản trị)</strong>
+                    <p class="desc small">Quản trị viên dự án: có quyền cập nhật chính sách phân quyền này, cấu hình pipeline CI và khởi tạo hạ tầng AI-DLC.</p>
+                  </div>
+                  <span id="maintainer-count" class="badge epic">0 Maintainer</span>
+                </div>
+                <div id="maintainer-members-list" class="members-chips"></div>
+                <div class="member-add-row" data-role="maintainer">
+                  <input type="text" id="input-add-maintainer" placeholder="Nhập username GitHub..." autocomplete="off" />
+                  <button type="button" id="btn-add-maintainer" class="btn secondary tiny">+ Thêm Maintainer</button>
+                </div>
+              </div>
+
+              <div class="roles-actions-row">
+                <button id="btn-save-roles" class="btn primary" type="button">
+                  💾 Cập nhật Phân quyền lên GitHub
+                </button>
+                <span id="save-roles-msg" class="save-status-msg"></span>
+              </div>
+            </div>
           </div>
 
           <div class="settings-actions">
@@ -298,106 +454,6 @@
           <button class="btn ghost" value="cancel">Đóng</button>
         </div>
       </form>
-    </dialog>
-
-    <dialog id="spec-dialog" class="spec-modal">
-      <div class="spec-modal-inner">
-        <div class="spec-modal-head">
-          <div>
-            <div class="spec-head-meta">
-              <span id="spec-kind-badge" class="badge"></span>
-              <span id="spec-issue-num" class="num"></span>
-              <a
-                id="spec-gh-link"
-                href="#"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="btn ghost tiny"
-                title="Mở trên GitHub"
-                >↗ GitHub</a
-              >
-            </div>
-            <h2>Chỉnh sửa Đặc tả & Kế hoạch (Spec-Driven)</h2>
-          </div>
-          <button
-            id="spec-modal-close-x"
-            class="btn ghost tiny close-btn"
-            type="button"
-            aria-label="Đóng"
-          >
-            ✕
-          </button>
-        </div>
-
-        <div id="spec-alert-stale" class="callout warning small" hidden>
-          ⚠️ <strong>Lưu ý:</strong> Issue này đã được PO Approve. Việc sửa đổi nội dung sẽ tự động
-          đánh dấu <code>stale</code> để PO nghiệm thu/phê duyệt lại.
-        </div>
-
-        <div class="spec-form-body">
-          <div class="form-group">
-            <label for="spec-input-title"><strong>Tiêu đề Issue</strong></label>
-            <input id="spec-input-title" type="text" placeholder="Tiêu đề tính năng" />
-          </div>
-
-          <div class="spec-ai-card">
-            <div class="spec-ai-head">
-              <span class="ai-sparkle">✨</span>
-              <strong>Trợ lý AI Refine (Gemini)</strong>
-              <span class="muted small"
-                >— Tự động bổ sung Given/When/Then, edge case hoặc làm rõ kỹ thuật</span
-              >
-            </div>
-            <div class="spec-ai-input-row">
-              <textarea
-                id="spec-ai-instruction"
-                rows="2"
-                placeholder="Ví dụ: Bổ sung thêm test case khi token hết hạn và định dạng Acceptance Criteria rõ ràng..."
-              ></textarea>
-              <button id="spec-btn-ai-refine" class="btn" type="button">
-                🤖 AI đề xuất sửa đổi
-              </button>
-            </div>
-            <div id="spec-ai-feedback" class="test-msg small" hidden></div>
-          </div>
-
-          <div class="form-group">
-            <label for="spec-input-body">
-              <strong>Nội dung Đặc tả (Markdown)</strong>
-              <span class="muted small"
-                >— Chuẩn AI Engineering: Vertical Slice, Given/When/Then, Scope</span
-              >
-            </label>
-            <textarea id="spec-input-body" rows="14" class="code-font"></textarea>
-          </div>
-
-          <div class="form-group">
-            <label for="spec-input-comment">
-              <strong>Ghi chú / Bình luận kỹ thuật</strong>
-              <span class="muted small"
-                >(Tùy chọn: tự động post comment từ DEV/PO giải thích lý do thay đổi)</span
-              >
-            </label>
-            <input
-              id="spec-input-comment"
-              type="text"
-              placeholder="Ví dụ: DEV bổ sung tiêu chí kiểm thử cho token refresh theo yêu cầu..."
-            />
-          </div>
-        </div>
-
-        <div class="spec-modal-footer">
-          <div class="spec-footer-left">
-            <span id="spec-save-status" class="status-msg small"></span>
-          </div>
-          <div class="row">
-            <button id="spec-btn-cancel" class="btn ghost" type="button">Đóng</button>
-            <button id="spec-btn-save" class="btn primary" type="button">
-              💾 Lưu thay đổi lên GitHub
-            </button>
-          </div>
-        </div>
-      </div>
     </dialog>
 
     <dialog id="spec-dialog" class="spec-modal">

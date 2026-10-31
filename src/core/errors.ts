@@ -13,6 +13,7 @@ export const ErrorCodes = [
   "E_DECISION_NOT_FOUND",
   "E_GITHUB_API",
   "E_GEMINI",
+  "E_MODEL",
   "E_PLAN_SCHEMA",
   "E_PLAN_NOT_FOUND",
   "E_PLAN_STALE",

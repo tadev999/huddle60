@@ -1,6 +1,6 @@
 import { AiDlcError, isAiDlcError } from "../core/errors.js";
 import { modelPlanJsonSchema, parseModelPlan, type ModelPlan } from "../core/plan.js";
-import type { Logger, ModelPort, ModelUsage } from "../ports.js";
+import type { AttachmentPart, Logger, ModelPort, ModelUsage } from "../ports.js";
 import { PLANNER_SYSTEM_INSTRUCTION } from "./prompt.js";
 
 export interface GeneratedPlan {
@@ -14,6 +14,8 @@ export async function generatePlan(
   logger: Logger,
   prompt: string,
   maxNodes: number,
+  attachments?: AttachmentPart[],
+  images?: Array<{ mimeType: string; dataBase64: string }>,
 ): Promise<GeneratedPlan> {
   const schema = modelPlanJsonSchema();
   const usage: ModelUsage = { inputTokens: 0, outputTokens: 0 };
@@ -27,6 +29,8 @@ export async function generatePlan(
       system: PLANNER_SYSTEM_INSTRUCTION,
       user,
       jsonSchema: schema,
+      attachments,
+      images,
     });
     usage.inputTokens += result.usage.inputTokens;
     usage.outputTokens += result.usage.outputTokens;
