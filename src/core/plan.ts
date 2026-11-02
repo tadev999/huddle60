@@ -11,6 +11,13 @@ const CriterionSchema = z.object({
   text: Text(500),
 });
 
+const ImpactSchema = z.object({
+  files: z.array(Text(200)).max(15),
+  reuse: z.array(Text(300)).max(10),
+  tests: z.array(Text(200)).max(10),
+  confidence: z.enum(["low", "medium", "high"]),
+});
+
 const NodeSchema = z.object({
   localId: z.string().regex(LOCAL_ID),
   kind: z.enum(["epic", "story", "task"]),
@@ -23,6 +30,14 @@ const NodeSchema = z.object({
   acRefs: z.array(z.string().regex(/^AC-\d{2,3}$/u)).max(20),
   blockedBy: z.array(z.string().regex(LOCAL_ID)).max(10),
   riskNotes: z.array(Text(300)).max(10),
+  impact: ImpactSchema.optional(),
+});
+
+const QuestionSchema = z.object({
+  text: Text(300),
+  blocking: z.boolean(),
+  suggestedAnswer: Text(300).optional(),
+  evidence: Text(300).optional(),
 });
 
 /** Shape the model must return. Server-owned fields (ids, hashes, source) are added later. */
@@ -30,12 +45,14 @@ export const ModelPlanSchema = z.object({
   rootKind: z.enum(["epic", "story"]),
   summary: Text(1000),
   assumptions: z.array(Text(300)).max(15),
-  openQuestions: z.array(z.object({ text: Text(300), blocking: z.boolean() })).max(15),
+  openQuestions: z.array(QuestionSchema).max(15),
   nodes: z.array(NodeSchema).min(1),
 });
 
 export type ModelPlan = z.infer<typeof ModelPlanSchema>;
 export type PlanNode = z.infer<typeof NodeSchema>;
+export type PlanImpact = z.infer<typeof ImpactSchema>;
+export type PlanQuestion = z.infer<typeof QuestionSchema>;
 
 export const PLAN_SCHEMA_VERSION = 1;
 
@@ -214,4 +231,9 @@ export function blockingQuestions(plan: ModelPlan): string[] {
   return plan.openQuestions
     .filter((question) => question.blocking)
     .map((question) => question.text);
+}
+
+/** Questions for which the model inferred a default answer from the repository. */
+export function suggestedAnswers(plan: ModelPlan): PlanQuestion[] {
+  return plan.openQuestions.filter((question) => question.suggestedAnswer);
 }

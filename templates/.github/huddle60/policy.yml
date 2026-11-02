@@ -36,3 +36,8 @@ acceptance:
 planner:
   max_nodes: 60
   plan_ttl_days: 30
+  # Let the planner read relevant source files before proposing a plan.
+  read_source: true
+  max_source_files: 12
+  # Extra paths never sent to the model (.env, keys and secrets are always excluded).
+  source_deny: []

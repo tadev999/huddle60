@@ -48,7 +48,7 @@ sequenceDiagram
     actor PO as Product Owner (PO)
     actor DEV as Developer (DEV)
     participant UI as Huddle60 UI (Client)
-    participant Server as Huddle60 Local Server
+    participant Server as Huddle60 Engine (trong trình duyệt)
     participant Gemini as Gemini Flash (Multimodal)
     participant GH as GitHub API (Issues & PRs)
     participant GA as GitHub Actions (Auditor)
@@ -114,9 +114,9 @@ sequenceDiagram
 
 | Chặng | Nguồn phát | Đích đến | Dạng dữ liệu (Payload) | Mục đích nghiệp vụ |
 | :--- | :--- | :--- | :--- | :--- |
-| **1. Thu thập đa phương thức** | PO Browser | Local Server | `POST /api/plans`<br>• `request`: Văn bản tự nhiên<br>• `links`: Mảng link tham chiếu (Figma, Docs, Swagger, PRD)<br>• `attachments`: Mảng Base64 (Ảnh, PDF, CSV, TXT, Markdown) | Truyền toàn bộ ngữ cảnh trực quan, tài liệu và đề bài của PO lên server xử lý. |
-| **2. Codebase & Doc-Aware Prompt** | Local Server | Gemini API | `generateContent`<br>• `systemInstruction`: Quy tắc Vertical Slice & AC<br>• `codebase_context`: Cấu trúc cây thư mục repo<br>• `inlineData`: Binary của ảnh và PDF<br>• `text`: Trích xuất bảng CSV/văn bản | Cho phép AI thấu hiểu cả kiến trúc code hiện có lẫn tài liệu đặc tả để sinh AC chuẩn xác. |
-| **3. Lưu trữ GitHub Issue** | Local Server | GitHub API | `POST /repos/{owner}/{repo}/issues`<br>• `body`: Chứa các section chuẩn hóa (`Goal`, `Scope`, `Acceptance Criteria`, `Tham chiếu kỹ thuật`: Links & Attachments) | Sử dụng GitHub Issue làm kho dữ liệu chính (Single Source of Truth), không cần database riêng. |
+| **1. Thu thập đa phương thức** | PO Browser | Browser Engine | Lời gọi nội bộ `/api/plans` với `request`, `links`, `attachments` | Xử lý trong trình duyệt, không gửi đề bài hay tệp đính kèm lên server Huddle60. |
+| **2. Codebase & Doc-Aware Prompt** | Browser Engine | Gemini API | `generateContent` với codebase context, liên kết và nội dung tệp | Trình duyệt gọi trực tiếp model bằng key của người dùng. |
+| **3. Lưu trữ GitHub Issue** | Browser Engine | GitHub API | `POST /repos/{owner}/{repo}/issues` với các section yêu cầu | Trình duyệt ghi trực tiếp vào GitHub bằng token của người dùng. |
 | **4. Khóa Hash-Lock** | GitHub Actions | Git Branch `huddle60-evidence` | • Snapshot chuẩn hóa theo **RFC 8785** (JCS)<br>• Khóa băm `contentHash: sha256(...)`<br>• Biên lai quyết định có chữ ký actor | Đảm bảo tính toàn vẹn (Immutability): Mọi hành vi sửa đổi yêu cầu sau lưng đều bị phát hiện ngay lập tức. |
 | **5. Bàn giao Context** | Huddle60 UI | AI Coding Agent (Cursor / Claude) | Clipboard Text:<br>• Bản đặc tả nghiệp vụ & AC<br>• Khối `<!-- BEGIN HUDDLE60 -->...<!-- END HUDDLE60 -->`<br>• Link Figma & tài liệu kỹ thuật | Cung cấp ngữ cảnh đầy đủ, chặt chẽ để AI code đúng mục tiêu và vượt qua gate kiểm định. |
 | **6. Kiểm thử PR Gate** | GitHub Actions | GitHub PR Status | `POST /repos/.../statuses/{sha}`<br>• `state: "success" \| "failure"`<br>• `context: "huddle60/baseline"` | Cổng chặn merge (Status Check): Chỉ cho phép merge code khi đáp ứng đúng baseline đã chốt. |
@@ -179,17 +179,23 @@ Trong một tính năng được tạo bởi Huddle60, luôn có sự phân đ�
   * Đính kèm tệp phân tích bằng cách **kéo thả file**, chọn file hoặc **dán trực tiếp (`Ctrl+V` / `Cmd+V`)**: Hỗ trợ ảnh mockup (PNG/JPG/WebP), tài liệu PDF, bảng dữ liệu CSV, tệp Markdown/TXT (tối đa 10 tệp, 10MB/tệp).
 
 ### Bước 2: AI Codebase & Multimodal Planner Phân Tích
-* Huddle60 tự động đọc lướt cấu trúc repository hiện có (`package.json`, cấu trúc cây file).
-* Gemini phân tích đồng thời bản vẽ thiết kế, tài liệu PDF, bảng dữ liệu CSV và yêu cầu tự nhiên:
-  * Trích xuất các trường dữ liệu, cấu trúc UI, tương tác và quy tắc nghiệp vụ vào các tiêu chí **Acceptance Criteria (AC dạng Given/When/Then)** rõ ràng.
+* Huddle60 đọc repository như một kỹ sư trước khi ước lượng:
+  * Bản đồ repo (cây thư mục), manifest của mọi hệ sinh thái (`package.json`, `pyproject.toml`, `go.mod`, `Package.swift`...), `README.md`.
+  * Gói tri thức `.huddle60/knowledge.md` nếu có (sinh bằng `npx huddle60 knowledge`).
+  * **AI scout tự chọn và đọc các file liên quan** tới yêu cầu (route, màn hình, model, service, test gần nhất). File bí mật (`.env`, khóa, secrets) không bao giờ được gửi cho model.
+  * Nếu bước đọc code lỗi, kế hoạch vẫn được tạo với ngữ cảnh nông hơn (không chặn PO).
+* Gemini phân tích đồng thời source code, bản vẽ thiết kế, tài liệu PDF, bảng dữ liệu CSV và yêu cầu tự nhiên:
+  * Trích xuất các trường dữ liệu, cấu trúc UI, tương tác và quy tắc nghiệp vụ vào các tiêu chí **Acceptance Criteria (AC dạng Given/When/Then)** rõ ràng, khớp với hành vi và quy ước đang có trong code.
+  * Sinh **Bản đồ tác động** cho mỗi Story/Task: file dự kiến thay đổi, thành phần tái sử dụng, test liên quan, độ tin cậy. File chưa tồn tại được đánh dấu `(mới)`.
   * Nếu tính năng gọn gàng: Đề xuất đúng **1 Story hoàn chỉnh** (không sinh task con vụn vặt).
-  * Nếu có điểm chưa rõ về nghiệp vụ: Nêu câu hỏi trong `openQuestions`.
+  * Nếu có điểm chưa rõ về nghiệp vụ: Nêu câu hỏi trong `openQuestions`, **kèm câu trả lời đề xuất và căn cứ** khi code hoặc tài liệu cho thấy một mặc định hợp lý.
   * Tuyệt đối **không hỏi PO về chi tiết kỹ thuật/codebase** (tự động đưa vào `assumptions`).
 
 ### Bước 3: Hội Ý 60 Giây & Tạo Issue
-* PO trả lời các câu hỏi nghiệp vụ (nếu có).
+* PO trả lời các câu hỏi nghiệp vụ (nếu có), hoặc bấm **Dùng N đề xuất của AI** để chấp nhận toàn bộ câu trả lời đề xuất chỉ với một cú nhấp.
 * Bấm **Tạo Issue trên GitHub**: Huddle60 tạo Request Issue và các Story/Task Issues trực tiếp trên GitHub repository.
 * Danh mục các link tham chiếu và tệp đính kèm đã phân tích được lưu giữ chuẩn hóa trong mục `### Tham chiếu kỹ thuật` của Issue và truyền trọn vẹn vào khối **Context** cho AI coding agent.
+* Bản đồ tác động được ghi vào mục `### Bản đồ tác động (AI gợi ý)`. Mục này **không thuộc baseline**: DEV sửa tự do mà không làm mất hiệu lực Approve của PO.
 
 ### Bước 4: PO Phê Duyệt (Approve - Khóa Hash-Lock)
 * PO vào tab **Công việc**, đọc lại các tiêu chí nghiệm thu AC.
@@ -255,5 +261,5 @@ Trong một tính năng được tạo bởi Huddle60, luôn có sự phân đ�
 1. **Zero-Database (Không Cơ sở dữ liệu riêng):** Toàn bộ dữ liệu nằm 100% trên GitHub (Issues, PRs, Git Evidence branch).
 2. **Hash-Lock RFC 8785:** Không ai có thể âm thầm thay đổi yêu cầu sau lưng lập trình viên mà không bị phát hiện.
 3. **One-Piece Flow (Làm dứt điểm từng lát cắt):** Không đưa hàng loạt task vào `In Progress`. Làm xong kịch bản nào, test xanh, merge và release kịch bản đó rồi mới làm tiếp.
-4. **Codebase-Aware Planning:** AI tự động hiểu hiện trạng code của dự án để đưa ra kế hoạch thực tế nhất, giải phóng PO khỏi những bối rối kỹ thuật.
-
+4. **Codebase-Aware Planning:** AI đọc source code liên quan và gói tri thức của dự án để đưa ra kế hoạch thực tế nhất, đề xuất sẵn câu trả lời có căn cứ, giải phóng PO khỏi những bối rối kỹ thuật.
+5. **Chặn ít nhất có thể:** Chỉ chặn cứng khi tính toàn vẹn bị phá (hash, AC, quyền). Mọi thứ khác (bản đồ tác động, câu trả lời đề xuất, gói tri thức) là gợi ý của AI mà con người chỉ cần xác nhận.

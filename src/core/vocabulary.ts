@@ -44,7 +44,12 @@ export const SECTIONS = {
   acRefs: "AC liên quan",
   technicalRefs: "Tham chiếu kỹ thuật",
   risks: "Câu hỏi và rủi ro",
+  /** Advisory only: deliberately absent from REQUIREMENT_SECTIONS so editing it never stales a baseline. */
+  impact: "Bản đồ tác động (AI gợi ý)",
 } as const;
+
+/** Repository knowledge pack read by the planner and coding agents. */
+export const KNOWLEDGE_PATH = ".huddle60/knowledge.md";
 
 /** Sections that belong to the requirement content of each kind and therefore to its hash. */
 export const REQUIREMENT_SECTIONS: Record<WorkItemKind, readonly string[]> = {

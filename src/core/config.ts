@@ -84,19 +84,10 @@ export async function readConfig(tenant?: string): Promise<Huddle60Config> {
   }
 }
 
-export async function writeConfig(
+export function applyConfigPatch(
+  current: Huddle60Config,
   patch: Partial<Huddle60Config>,
-  tenant?: string,
-): Promise<Huddle60Config> {
-  const filePath = getConfigPath(tenant);
-  let current: Huddle60Config = {};
-  try {
-    if (existsSync(filePath)) {
-      current = JSON.parse(await readFile(filePath, "utf8")) as Huddle60Config;
-    }
-  } catch {
-    current = {};
-  }
+): Huddle60Config {
   const next: Huddle60Config = { ...current };
 
   for (const [key, value] of Object.entries(patch) as Array<[keyof Huddle60Config, unknown]>) {
@@ -136,6 +127,23 @@ export async function writeConfig(
     const repos = new Set([next.repo, ...(next.recentRepos ?? [])]);
     next.recentRepos = Array.from(repos).slice(0, 20);
   }
+  return next;
+}
+
+export async function writeConfig(
+  patch: Partial<Huddle60Config>,
+  tenant?: string,
+): Promise<Huddle60Config> {
+  const filePath = getConfigPath(tenant);
+  let current: Huddle60Config = {};
+  try {
+    if (existsSync(filePath)) {
+      current = JSON.parse(await readFile(filePath, "utf8")) as Huddle60Config;
+    }
+  } catch {
+    current = {};
+  }
+  const next = applyConfigPatch(current, patch);
 
   const dir = tenant ? join(getConfigDir(), "tenants") : getConfigDir();
   await mkdir(dir, { recursive: true });

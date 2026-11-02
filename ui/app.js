@@ -1,6 +1,5 @@
-// huddle60 local app (AI-DLC). Plain ES module, no build step. All user/model text is set via textContent.
+// huddle60 browser app (AI-DLC). All user/model text is set via textContent.
 
-const TOKEN_KEY = "ai-dlc-token";
 const POLL_MS = 3000;
 const POLL_MAX = 60;
 
@@ -14,6 +13,11 @@ const state = {
   collapsed: new Set(),
   userRepos: [],
   loadingRepos: false,
+  repositoryVersion: 0,
+  itemsRequest: 0,
+  itemsStatus: "idle",
+  itemsError: "",
+  switchingRepository: false,
   rolesDraft: { po: [], dev: [], maintainer: [] },
   canEditRoles: false,
   planAttachments: [],
@@ -39,39 +43,9 @@ function h(tag, attrs = {}, ...children) {
   return el;
 }
 
-function readToken() {
-  const match = /(?:^|&)token=([\w-]+)/.exec(location.hash.slice(1));
-  if (match) {
-    sessionStorage.setItem(TOKEN_KEY, match[1]);
-    history.replaceState(null, "", location.pathname + (location.search || ""));
-    return match[1];
-  }
-
-  const meta = document.querySelector('meta[name="huddle60-session-token"]');
-  if (meta && meta.content) {
-    sessionStorage.setItem(TOKEN_KEY, meta.content);
-    return meta.content;
-  }
-
-  const stored = sessionStorage.getItem(TOKEN_KEY);
-  if (stored) return stored;
-
-  const cookieMatch = /(?:^|;\s*)huddle60_token=([\w-]+)/.exec(document.cookie);
-  if (cookieMatch) {
-    sessionStorage.setItem(TOKEN_KEY, cookieMatch[1]);
-    return cookieMatch[1];
-  }
-
-  return null;
-}
-
-let token = readToken();
-
 function readTenant() {
   const meta = document.querySelector('meta[name="huddle60-tenant"]');
   if (meta?.content) return meta.content;
-  const match = /(?:^|;\s*)huddle60_tenant=([\w-]+)/.exec(document.cookie);
-  if (match) return match[1];
   const parts = window.location.pathname.split("/").filter(Boolean);
   if (parts.length >= 1 && !["app", "landing", "index.html"].includes(parts[0])) {
     return parts[0];
@@ -88,36 +62,29 @@ class ApiError extends Error {
   }
 }
 
-async function api(path, body, method, isRetry = false) {
+let enginePromise = null;
+
+function loadEngine() {
+  enginePromise ??= import("/engine.js?v=20261102_8").then((mod) =>
+    mod.startEngine(document.querySelector('meta[name="huddle60-oauth"]')?.content === "1"),
+  );
+  return enginePromise;
+}
+
+async function api(path, body, method) {
   const tenantToPass = state.session?.tenant || currentTenant;
-  const currentToken = token || readToken();
-  const init = {
-    headers: {
-      "x-ai-dlc-token": currentToken ?? "",
-      ...(tenantToPass ? { "x-huddle60-tenant": tenantToPass } : {}),
-    },
-    method: method ?? (body !== undefined ? "POST" : "GET"),
-  };
-  if (body !== undefined) {
-    init.headers["content-type"] = "application/json";
-    init.body = JSON.stringify(body);
-  }
-  const response = await fetch(path, init);
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = data.error ?? { code: "E_HTTP", message: `HTTP ${response.status}` };
-    if (error.code === "E_TOKEN" && !isRetry) {
-      sessionStorage.removeItem(TOKEN_KEY);
-      const meta = document.querySelector('meta[name="huddle60-session-token"]');
-      if (meta?.content && meta.content !== currentToken) {
-        token = meta.content;
-        sessionStorage.setItem(TOKEN_KEY, token);
-        return api(path, body, method, true);
-      }
-    }
+  const engine = await loadEngine();
+  const result = await engine.call(
+    method ?? (body !== undefined ? "POST" : "GET"),
+    path,
+    body,
+    tenantToPass,
+  );
+  if (result.status >= 400) {
+    const error = result.body?.error ?? { code: "E_HTTP", message: `HTTP ${result.status}` };
     throw new ApiError(error.code, error.message);
   }
-  return data;
+  return result.body;
 }
 
 function issueUrl(number) {
@@ -142,7 +109,7 @@ async function withBusy(button, fn) {
 // ---------- activity log ----------
 
 function log(kind, title, detail) {
-  const time = new Date().toLocaleTimeString([], {
+  const time = new Date().toLocaleTimeString("en", {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
@@ -176,13 +143,13 @@ function openDialog({ title, body, okLabel, copyText }) {
   $("#dialog-body").replaceChildren(body);
   const ok = $("#dialog-ok");
   ok.hidden = !okLabel;
-  ok.textContent = okLabel ?? "Xác nhận";
+  ok.textContent = okLabel ?? "Confirm";
   const copy = $("#dialog-copy");
   copy.hidden = !copyText;
-  copy.textContent = "Sao chép";
+  copy.textContent = "Copy";
   copy.onclick = async () => {
     await navigator.clipboard.writeText(copyText);
-    copy.textContent = "Đã sao chép";
+    copy.textContent = "Copied";
   };
   dialog.returnValue = "";
   dialog.showModal();
@@ -194,9 +161,9 @@ function openDialog({ title, body, okLabel, copyText }) {
 // ---------- work items ----------
 
 const STAGE_LABEL = {
-  "awaiting-approval": "Chờ PO duyệt",
-  "awaiting-ready": "Chờ DEV xác nhận",
-  "in-progress": "Đang triển khai",
+  "awaiting-approval": "Awaiting approval",
+  "awaiting-ready": "Awaiting developer",
+  "in-progress": "In progress",
 };
 
 function displayTitle(item) {
@@ -306,32 +273,32 @@ async function copyTaskShareLink(button, item) {
   try {
     await navigator.clipboard.writeText(shareUrl);
     const original = button.textContent;
-    button.textContent = "✓ Đã chép!";
+    button.textContent = "✓ Copied!";
     button.classList.add("copied");
-    log("ok", `Đã sao chép liên kết công việc #${item.number}`, { text: shareUrl });
+    log("ok", `Copied link to issue #${item.number}`, { text: shareUrl });
     setTimeout(() => {
       button.textContent = original;
       button.classList.remove("copied");
     }, 2000);
   } catch (_e) {
-    prompt("Sao chép link chia sẻ công việc:", shareUrl);
+    prompt("Copy the issue link:", shareUrl);
   }
 }
 
 async function promptGuestLogin(actionName) {
   const result = await openDialog({
-    title: `Yêu cầu quyền: ${actionName}`,
+    title: `Sign in to ${actionName}`,
     body: h(
       "div",
       {},
-      h("p", {}, "Bạn đang xem công việc ở Chế độ Khách (Read-only)."),
+      h("p", {}, "You are viewing this workspace as a guest (read-only)."),
       h(
         "p",
         {},
-        `Để thực hiện thao tác "${actionName}", bạn cần kết nối tài khoản GitHub có vai trò phù hợp trong tệp policy của repository.`,
+        `To ${actionName}, connect a GitHub account with the appropriate role in the repository policy.`,
       ),
     ),
-    okLabel: "Đi tới Cài đặt & Kết nối",
+    okLabel: "Open settings",
   });
   if (result === "ok") {
     switchView("settings");
@@ -340,16 +307,16 @@ async function promptGuestLogin(actionName) {
 
 function actionsFor(item) {
   const pending = state.pending.get(item.number);
-  if (pending) return [h("span", { class: "meta" }, `${pending} · Chờ Actions`)];
+  if (pending) return [h("span", { class: "meta" }, `${pending} · Waiting for Actions`)];
   const buttons = [
     h(
       "button",
       {
         class: "btn ghost btn-share-task",
-        title: "Sao chép link chia sẻ task này cho DEV hoặc đồng đội",
+        title: "Copy a link to share with your team",
         onclick: (e) => copyTaskShareLink(e.currentTarget, item),
       },
-      "🔗 Chia sẻ",
+      "🔗 Share",
     ),
     h(
       "a",
@@ -358,7 +325,7 @@ function actionsFor(item) {
         href: item.url,
         target: "_blank",
         rel: "noopener noreferrer",
-        title: "Mở trên GitHub",
+        title: "Open on GitHub",
       },
       "↗",
     ),
@@ -366,7 +333,7 @@ function actionsFor(item) {
       "button",
       {
         class: "btn ghost",
-        title: "Sao chép ngữ cảnh cho Coding Agent (Cursor / Claude Code)",
+        title: "Copy context for a coding agent (Cursor / Claude Code)",
         onclick: (e) => showContext(e.currentTarget, item),
       },
       "Context",
@@ -378,10 +345,10 @@ function actionsFor(item) {
         "button",
         {
           class: "btn ghost",
-          title: "Sửa đặc tả & kế hoạch (kèm AI hỗ trợ)",
+          title: "Edit the specification with AI assistance",
           onclick: () => openSpecEditor(item),
         },
-        "✏️ Sửa",
+        "✏️ Edit",
       ),
     );
   }
@@ -391,7 +358,7 @@ function actionsFor(item) {
     if (lanes.length > 0) {
       const select = h(
         "select",
-        { title: "Luồng triển khai" },
+        { title: "Delivery lane" },
         lanes.map((lane) => h("option", { value: lane, selected: lane === "standard" }, lane)),
       );
       buttons.push(
@@ -400,7 +367,7 @@ function actionsFor(item) {
           "button",
           {
             class: "btn",
-            title: "DEV xác nhận sẵn sàng triển khai",
+            title: "Developer confirms readiness",
             onclick: (e) => decide(e.currentTarget, item, { action: "ready", lane: select.value }),
           },
           "Ready",
@@ -414,7 +381,7 @@ function actionsFor(item) {
         "button",
         {
           class: "btn primary",
-          title: "PO duyệt nội dung hiện tại",
+          title: "Product Owner approves the current requirements",
           onclick: (e) => decide(e.currentTarget, item, { action: "approve" }),
         },
         "Approve",
@@ -427,7 +394,7 @@ function actionsFor(item) {
         "button",
         {
           class: "btn primary",
-          title: "PO nghiệm thu trên build đã merge",
+          title: "Product Owner accepts a merged build",
           onclick: (e) => accept(e.currentTarget, item),
         },
         "Accept",
@@ -443,8 +410,8 @@ function actionsFor(item) {
           "button",
           {
             class: "btn ghost",
-            title: "Duyệt yêu cầu (Chế độ Khách: Click để xem cách đăng nhập)",
-            onclick: () => promptGuestLogin("Duyệt yêu cầu (Approve)"),
+            title: "Approve requirements (guests: click to sign in)",
+            onclick: () => promptGuestLogin("approve requirements"),
           },
           "Approve",
         ),
@@ -455,8 +422,8 @@ function actionsFor(item) {
           "button",
           {
             class: "btn ghost",
-            title: "Xác nhận triển khai (Chế độ Khách: Click để xem cách đăng nhập)",
-            onclick: () => promptGuestLogin("Nhận việc (Ready)"),
+            title: "Confirm readiness (guests: click to sign in)",
+            onclick: () => promptGuestLogin("confirm readiness"),
           },
           "Ready",
         ),
@@ -472,9 +439,9 @@ function renderItems() {
   const rows = entries.map(
     ({ item, depth = 0, hasChildren = false, expanded = false, contextOnly = false }) => {
       const meta = [];
-      if (item.approvedBy) meta.push(h("div", {}, `Đã duyệt · ${item.approvedBy}`));
+      if (item.approvedBy) meta.push(h("div", {}, `Approved · ${item.approvedBy}`));
       if (item.ready) meta.push(h("div", {}, `Ready · ${item.ready.by} · ${item.ready.lane}`));
-      if (item.changed) meta.push(h("div", { class: "changed" }, "Nội dung đã thay đổi"));
+      if (item.changed) meta.push(h("div", { class: "changed" }, "Requirements changed"));
       const link = h(
         "a",
         { href: item.url, target: "_blank", rel: "noopener noreferrer" },
@@ -487,8 +454,8 @@ function renderItems() {
               class: "tree-toggle",
               type: "button",
               "aria-expanded": String(expanded),
-              "aria-label": `${expanded ? "Thu gọn" : "Mở rộng"} #${item.number}`,
-              title: `${expanded ? "Thu gọn" : "Mở rộng"} #${item.number}`,
+              "aria-label": `${expanded ? "Collapse" : "Expand"} #${item.number}`,
+              title: `${expanded ? "Collapse" : "Expand"} #${item.number}`,
               onclick: () => {
                 const key = `${state.filter}:${item.number}`;
                 if (state.collapsed.has(key)) state.collapsed.delete(key);
@@ -541,7 +508,17 @@ function renderItems() {
   const empty = $("#items-empty");
   empty.hidden = rows.length > 0;
   empty.textContent =
-    state.items.length === 0 ? "Chưa có công việc đang mở." : "Không có công việc phù hợp.";
+    state.itemsStatus === "loading"
+      ? "Loading issues..."
+      : state.itemsStatus === "error"
+        ? `Could not load issues: ${state.itemsError}. Use Refresh to retry.`
+        : state.session?.status !== "ready"
+          ? state.session?.repo
+            ? `Repository unavailable. ${state.session.lastError || "Check the repository setup or connection in Settings."}`
+            : "Select a repository to view work."
+          : state.items.length === 0
+            ? "No open issues yet."
+            : "No matching issues.";
   for (const chip of document.querySelectorAll("#filters .chip")) {
     const filter = chip.dataset.filter;
     const count = state.items.filter((item) =>
@@ -574,7 +551,7 @@ function focusTargetTask() {
   if (row) {
     row.classList.add("target-highlight");
     row.scrollIntoView({ behavior: "smooth", block: "center" });
-    log("ok", `Đang mở công việc #${targetNumber} theo liên kết`);
+    log("ok", `Opened issue #${targetNumber} from a shared link`);
     setTimeout(() => {
       row.classList.remove("target-highlight");
     }, 4000);
@@ -582,17 +559,34 @@ function focusTargetTask() {
 }
 
 async function loadItems(force = false) {
+  if (state.switchingRepository || state.session?.status !== "ready") return;
+  const version = state.repositoryVersion;
+  const request = ++state.itemsRequest;
   const button = $("#refresh");
-  await withBusy(button, async () => {
-    try {
-      const url = force ? "/api/items?refresh=1" : "/api/items";
-      state.items = await api(url);
+  button.disabled = true;
+  state.items = [];
+  state.itemsStatus = "loading";
+  renderItems();
+  try {
+    const url = force ? "/api/items?refresh=1" : "/api/items";
+    const items = await api(url);
+    if (version !== state.repositoryVersion || request !== state.itemsRequest) return;
+    state.items = items;
+    state.itemsStatus = "ready";
+    renderItems();
+    focusTargetTask();
+  } catch (error) {
+    if (version === state.repositoryVersion && request === state.itemsRequest) {
+      state.items = [];
+      state.itemsStatus = "error";
+      state.itemsError = error.message;
       renderItems();
-      focusTargetTask();
-    } catch (error) {
-      logError("Không tải được công việc", error);
+      logError("Could not load issues", error);
     }
-  });
+  } finally {
+    if (version === state.repositoryVersion && request === state.itemsRequest)
+      button.disabled = false;
+  }
 }
 
 async function decide(button, item, input) {
@@ -600,28 +594,31 @@ async function decide(button, item, input) {
     try {
       return await api(`/api/issues/${item.number}/decisions`, input);
     } catch (error) {
-      logError(`#${item.number} ${input.action} thất bại`, error);
+      logError(`#${item.number} ${input.action} failed`, error);
       return null;
     }
   });
   if (!command) return;
   state.pending.set(item.number, input.action);
   renderItems();
-  const update = log("pending", `#${item.number} ${input.action} đã gửi`, {
+  const update = log("pending", `#${item.number} ${input.action} submitted`, {
     code: command.command,
   });
   pollReply(item.number, command.commentId, input.action, update);
 }
 
 async function pollReply(issueNumber, commentId, action, update) {
+  const version = state.repositoryVersion;
   for (let attempt = 0; attempt < POLL_MAX; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+    if (version !== state.repositoryVersion) return;
     try {
       const reply = await api(`/api/issues/${issueNumber}/replies/${commentId}`);
+      if (version !== state.repositoryVersion) return;
       if (reply.status === "done") {
         update(
           reply.ok ? "ok" : "fail",
-          `#${issueNumber} ${action}: ${reply.ok ? "đã ghi nhận" : "bị từ chối"}`,
+          `#${issueNumber} ${action}: ${reply.ok ? "recorded" : "rejected"}`,
           { text: reply.body },
         );
         state.pending.delete(issueNumber);
@@ -634,8 +631,8 @@ async function pollReply(issueNumber, commentId, action, update) {
   }
   state.pending.delete(issueNumber);
   renderItems();
-  update("fail", `#${issueNumber} ${action}: chưa thấy phản hồi từ GitHub Actions`, {
-    text: "Kiểm tra workflow huddle60 trong GitHub Actions, sau đó tải lại.",
+  update("fail", `#${issueNumber} ${action}: no response from GitHub Actions yet`, {
+    text: "Check the huddle60 workflow in GitHub Actions, then refresh.",
   });
 }
 
@@ -644,18 +641,18 @@ async function accept(button, item) {
     try {
       return await api("/api/builds");
     } catch (error) {
-      logError("Không tải được danh sách build", error);
+      logError("Could not load builds", error);
       return null;
     }
   });
   if (!builds) return;
   if (builds.length === 0) {
     await openDialog({
-      title: `Nghiệm thu #${item.number}`,
+      title: `Accept #${item.number}`,
       body: h(
         "p",
         {},
-        `Chưa có build thành công trên ${state.session.defaultBranch}. Merge PR và chờ build hoàn tất.`,
+        `No successful builds on ${state.session.defaultBranch}. Merge a PR and wait for the build to finish.`,
       ),
     });
     return;
@@ -663,7 +660,7 @@ async function accept(button, item) {
   const list = h(
     "div",
     {},
-    h("p", { class: "muted" }, "Chọn build đã chạy trên nhánh chính để nghiệm thu:"),
+    h("p", { class: "muted" }, "Select a default-branch build to accept:"),
     builds.map((build, index) =>
       h(
         "label",
@@ -678,7 +675,7 @@ async function accept(button, item) {
   );
   if (
     (await openDialog({
-      title: `Nghiệm thu #${item.number} · ${displayTitle(item)}`,
+      title: `Accept #${item.number} · ${displayTitle(item)}`,
       body: list,
       okLabel: "Accept",
     })) !== "ok"
@@ -718,8 +715,8 @@ async function openSpecEditor(item) {
   $("#spec-gh-link").href = item.url;
   $("#spec-alert-stale").hidden = item.stage === "awaiting-approval";
 
-  $("#spec-input-title").value = "Đang tải...";
-  $("#spec-input-body").value = "Đang tải dữ liệu từ GitHub...";
+  $("#spec-input-title").value = "Loading...";
+  $("#spec-input-body").value = "Loading from GitHub...";
   $("#spec-input-comment").value = "";
   $("#spec-ai-instruction").value = "";
   $("#spec-ai-feedback").hidden = true;
@@ -732,8 +729,8 @@ async function openSpecEditor(item) {
     $("#spec-input-title").value = details.title;
     $("#spec-input-body").value = details.body;
   } catch (error) {
-    logError(`Không tải được chi tiết #${item.number}`, error);
-    $("#spec-input-body").value = `Lỗi tải: ${error.message}`;
+    logError(`Could not load issue #${item.number}`, error);
+    $("#spec-input-body").value = `Load failed: ${error.message}`;
   }
 }
 
@@ -745,7 +742,7 @@ async function handleAiRefineSpec() {
 
   if (!instruction) {
     feedback.className = "test-msg err";
-    feedback.textContent = "Vui lòng nhập yêu cầu chỉnh sửa cho AI.";
+    feedback.textContent = "Enter instructions for the AI.";
     feedback.hidden = false;
     return;
   }
@@ -761,11 +758,11 @@ async function handleAiRefineSpec() {
         $("#spec-input-body").value = result.proposedBody;
       }
       feedback.className = "test-msg ok";
-      feedback.textContent = `✨ AI đã cập nhật: ${result.summary || "Đã áp dụng các sửa đổi theo yêu cầu."}`;
+      feedback.textContent = `✨ AI updated the draft: ${result.summary || "Requested changes applied."}`;
       feedback.hidden = false;
     } catch (error) {
       feedback.className = "test-msg err";
-      feedback.textContent = `Lỗi: ${error.message}`;
+      feedback.textContent = `Error: ${error.message}`;
       feedback.hidden = false;
     }
   });
@@ -781,12 +778,12 @@ async function handleSaveSpecChanges() {
 
   if (!title) {
     status.className = "status-msg err";
-    status.textContent = "Tiêu đề không được để trống.";
+    status.textContent = "A title is required.";
     return;
   }
 
   status.className = "status-msg";
-  status.textContent = "Đang lưu lên GitHub...";
+  status.textContent = "Saving to GitHub...";
 
   await withBusy(button, async () => {
     try {
@@ -800,14 +797,14 @@ async function handleSaveSpecChanges() {
         "PATCH",
       );
       status.className = "status-msg ok";
-      status.textContent = "Đã lưu thành công!";
-      log("ok", `#${editingSpecItem.number} đã cập nhật đặc tả trên GitHub`);
+      status.textContent = "Saved successfully.";
+      log("ok", `#${editingSpecItem.number} specification updated on GitHub`);
       $("#spec-dialog").close();
       await loadItems();
     } catch (error) {
       status.className = "status-msg err";
-      status.textContent = `Lỗi lưu: ${error.message}`;
-      logError(`#${editingSpecItem.number} cập nhật đặc tả thất bại`, error);
+      status.textContent = `Save failed: ${error.message}`;
+      logError(`#${editingSpecItem.number} specification update failed`, error);
     }
   });
 }
@@ -830,7 +827,7 @@ function renderNode(node, byParent) {
       h("strong", {}, displayTitle(node)),
       h("span", { class: "node-id" }, node.localId),
       node.blockedBy.length
-        ? h("span", { class: "node-id" }, `Phụ thuộc: ${node.blockedBy.join(", ")}`)
+        ? h("span", { class: "node-id" }, `Depends on: ${node.blockedBy.join(", ")}`)
         : null,
       created
         ? h(
@@ -854,7 +851,63 @@ function renderNode(node, byParent) {
           node.riskNotes.map((text) => h("li", { class: "risk" }, `⚠ ${text}`)),
         )
       : null,
+    node.impact ? renderImpact(node.impact) : null,
     (byParent.get(node.localId) ?? []).map((child) => renderNode(child, byParent)),
+  );
+}
+
+const CONFIDENCE_LABEL = { low: "low", medium: "medium", high: "high" };
+
+function renderImpact(impact) {
+  const group = (title, items) =>
+    items.length
+      ? [
+          h("h4", {}, title),
+          h(
+            "ul",
+            {},
+            items.map((text) => h("li", {}, h("code", {}, text))),
+          ),
+        ]
+      : [];
+  return h(
+    "details",
+    { class: "impact" },
+    h(
+      "summary",
+      {},
+      `Impact map (AI suggestion · ${CONFIDENCE_LABEL[impact.confidence] ?? impact.confidence} confidence)`,
+    ),
+    ...group("Expected file changes", impact.files),
+    ...(impact.reuse.length
+      ? [
+          h("h4", {}, "Reusable components"),
+          h(
+            "ul",
+            {},
+            impact.reuse.map((text) => h("li", {}, text)),
+          ),
+        ]
+      : []),
+    ...group("Related tests", impact.tests),
+  );
+}
+
+function renderQuestion(question) {
+  return h(
+    "li",
+    {},
+    question.text,
+    question.suggestedAnswer
+      ? h(
+          "div",
+          { class: "suggestion" },
+          `💡 Suggestion: ${question.suggestedAnswer}`,
+          question.evidence
+            ? h("span", { class: "muted small" }, ` — evidence: ${question.evidence}`)
+            : null,
+        )
+      : null,
   );
 }
 
@@ -863,7 +916,7 @@ function fillList(selector, items) {
   list.replaceChildren(
     ...(items.length
       ? items.map((text) => h("li", {}, text))
-      : [h("li", { class: "muted" }, "Không có")]),
+      : [h("li", { class: "muted" }, "None")]),
   );
 }
 
@@ -884,22 +937,30 @@ function renderDraft() {
   );
   const blocking = $("#plan-blocking");
   blocking.hidden = draft.blocking.length === 0;
-  blocking.querySelector("ul").replaceChildren(...draft.blocking.map((text) => h("li", {}, text)));
-  fillList(
-    "#plan-open",
-    plan.openQuestions.filter((q) => !q.blocking).map((q) => q.text),
+  blocking
+    .querySelector("ul")
+    .replaceChildren(...plan.openQuestions.filter((q) => q.blocking).map(renderQuestion));
+  const openQuestions = plan.openQuestions.filter((q) => !q.blocking);
+  $("#plan-open").replaceChildren(
+    ...(openQuestions.length
+      ? openQuestions.map(renderQuestion)
+      : [h("li", { class: "muted" }, "None")]),
   );
   fillList("#plan-assumptions", plan.assumptions);
   fillList("#plan-clarifications", draft.clarifications);
 
   const created = Boolean(draft.created);
   $("#refine-form").hidden = created;
+  const suggestions = plan.openQuestions.filter((q) => q.suggestedAnswer).length;
+  const acceptButton = $("#accept-suggestions-btn");
+  acceptButton.hidden = created || suggestions === 0;
+  acceptButton.textContent = `Use ${suggestions} AI suggestions`;
   const createButton = $("#create-btn");
   const reasons = [];
-  if (!hasRole("po")) reasons.push("Chỉ PO được tạo Issue");
-  if (draft.blocking.length) reasons.push("Cần làm rõ câu hỏi chặn");
+  if (!hasRole("po")) reasons.push("Only Product Owners can create issues");
+  if (draft.blocking.length) reasons.push("Resolve blocking questions first");
   createButton.disabled = reasons.length > 0;
-  createButton.textContent = `Tạo ${plan.nodes.length} Issue`;
+  createButton.textContent = `Create ${plan.nodes.length} issues`;
   $("#create-hint").textContent = reasons.join(" · ");
 
   const createdBox = $("#plan-created");
@@ -909,7 +970,7 @@ function renderDraft() {
       h(
         "li",
         {},
-        "Yêu cầu ",
+        "Request ",
         h(
           "a",
           {
@@ -970,14 +1031,14 @@ function renderPlanAttachments() {
         isImg
           ? h("img", {
               src: `data:${att.mimeType};base64,${att.dataBase64}`,
-              alt: att.name || `Tệp ${index + 1}`,
+              alt: att.name || `File ${index + 1}`,
             })
           : [
               h("span", { class: "doc-icon" }, getFileIcon(att.mimeType, att.name)),
               h(
                 "span",
-                { class: "doc-name", title: att.name || "Tệp đính kèm" },
-                att.name || "Tệp đính kèm",
+                { class: "doc-name", title: att.name || "Attachment" },
+                att.name || "Attachment",
               ),
             ],
         h(
@@ -985,7 +1046,7 @@ function renderPlanAttachments() {
           {
             type: "button",
             class: "chip-remove",
-            title: "Xóa tệp",
+            title: "Remove file",
             onclick: (e) => {
               e.stopPropagation();
               state.planAttachments.splice(index, 1);
@@ -1004,11 +1065,11 @@ async function addPlanAttachmentFile(file) {
   if (!file) return;
   state.planAttachments = state.planAttachments || [];
   if (state.planAttachments.length >= 10) {
-    alert("Tối đa 10 tệp đính kèm cho mỗi kế hoạch.");
+    alert("A plan supports up to 10 attachments.");
     return;
   }
   if (file.size > 10 * 1024 * 1024) {
-    alert(`Dung lượng tệp "${file.name}" vượt quá 10MB.`);
+    alert(`File "${file.name}" exceeds 10 MB.`);
     return;
   }
   const reader = new FileReader();
@@ -1120,7 +1181,7 @@ async function generatePlan(event) {
     mimeType: att.mimeType,
     dataBase64: att.dataBase64,
   }));
-  const update = log("pending", "Đang tạo kế hoạch…");
+  const update = log("pending", "Generating plan…");
   await withBusy($("#plan-generate"), async () => {
     try {
       state.draft = await api("/api/plans", {
@@ -1132,10 +1193,10 @@ async function generatePlan(event) {
       renderDraft();
       update(
         "ok",
-        `Kế hoạch: ${state.draft.plan.nodes.length} công việc · ${state.draft.blocking.length} câu hỏi chặn`,
+        `Plan: ${state.draft.plan.nodes.length} items · ${state.draft.blocking.length} blocking questions`,
       );
     } catch (error) {
-      update("fail", "Không thể tạo kế hoạch", { text: `${error.code ?? ""}: ${error.message}` });
+      update("fail", "Could not generate plan", { text: `${error.code ?? ""}: ${error.message}` });
     }
   });
 }
@@ -1143,7 +1204,7 @@ async function generatePlan(event) {
 async function refinePlan(event) {
   event.preventDefault();
   const clarification = $("#refine-text").value;
-  const update = log("pending", "Đang cập nhật kế hoạch…");
+  const update = log("pending", "Updating plan…");
   await withBusy($("#refine-btn"), async () => {
     try {
       state.draft = await api(`/api/plans/${state.draft.draftId}/refine`, { clarification });
@@ -1151,10 +1212,28 @@ async function refinePlan(event) {
       renderDraft();
       update(
         "ok",
-        `Đã cập nhật: ${state.draft.plan.nodes.length} công việc · ${state.draft.blocking.length} câu hỏi chặn`,
+        `Updated: ${state.draft.plan.nodes.length} items · ${state.draft.blocking.length} blocking questions`,
       );
     } catch (error) {
-      update("fail", "Không thể cập nhật kế hoạch", {
+      update("fail", "Could not update plan", {
+        text: `${error.code ?? ""}: ${error.message}`,
+      });
+    }
+  });
+}
+
+async function acceptSuggestions() {
+  const update = log("pending", "Applying AI suggestions…");
+  await withBusy($("#accept-suggestions-btn"), async () => {
+    try {
+      state.draft = await api(`/api/plans/${state.draft.draftId}/accept-suggestions`, {});
+      renderDraft();
+      update(
+        "ok",
+        `Updated: ${state.draft.plan.nodes.length} items · ${state.draft.blocking.length} blocking questions`,
+      );
+    } catch (error) {
+      update("fail", "Could not apply suggestions", {
         text: `${error.code ?? ""}: ${error.message}`,
       });
     }
@@ -1164,24 +1243,24 @@ async function refinePlan(event) {
 async function createIssues() {
   const draft = state.draft;
   const confirm = await openDialog({
-    title: "Tạo Issue trên GitHub",
+    title: "Create GitHub issues",
     body: h(
       "p",
       {},
-      `Tạo 1 yêu cầu và ${draft.plan.nodes.length} Issue trong ${state.session.repo.owner}/${state.session.repo.repo} bằng tài khoản ${state.session.viewer.login}.`,
+      `Create one request and ${draft.plan.nodes.length} issues in ${state.session.repo.owner}/${state.session.repo.repo} as ${state.session.viewer.login}.`,
     ),
-    okLabel: "Tạo Issue",
+    okLabel: "Create issues",
   });
   if (confirm !== "ok") return;
-  const update = log("pending", "Đang tạo Issue…");
+  const update = log("pending", "Creating issues…");
   await withBusy($("#create-btn"), async () => {
     try {
       state.draft = await api(`/api/plans/${draft.draftId}/create`, {});
       renderDraft();
-      update("ok", `Đã tạo ${Object.keys(state.draft.created.issues).length} Issue`);
+      update("ok", `Created ${Object.keys(state.draft.created.issues).length} issues`);
       loadItems();
     } catch (error) {
-      update("fail", "Tạo Issue chưa hoàn tất. Chọn Tạo Issue để tiếp tục.", {
+      update("fail", "Issue creation is incomplete. Select Create issues to resume.", {
         text: `${error.code ?? ""}: ${error.message}`,
       });
     }
@@ -1195,6 +1274,7 @@ async function loadSettings() {
   if (msg) msg.textContent = "";
 
   try {
+    $("#remember-credentials").checked = (await loadEngine()).rememberCredentials;
     const data = await api("/api/settings");
     state.settings = data;
     updateRepoInitBanner();
@@ -1204,45 +1284,56 @@ async function loadSettings() {
     ghBadge.className = "badge";
     if (data.githubUser) {
       ghBadge.classList.add("ok");
-      ghBadge.textContent = `✓ Đã kết nối (@${data.githubUser.login})`;
+      ghBadge.textContent = "Connected";
       $("#github-user-row").hidden = false;
       const connectSec = $("#github-connect-section");
       if (connectSec) connectSec.hidden = true;
       $("#github-user-login").textContent = `@${data.githubUser.login}`;
-      $("#github-user-id").textContent = `ID: ${data.githubUser.id}`;
+      $("#github-user-id").textContent = `GitHub ID · ${data.githubUser.id}`;
     } else {
       ghBadge.classList.add("danger");
-      ghBadge.textContent = "Chưa kết nối";
+      ghBadge.textContent = "Not connected";
       $("#github-user-row").hidden = true;
       const connectSec = $("#github-connect-section");
       if (connectSec) connectSec.hidden = false;
     }
 
     if (data.githubTokenMasked) {
-      $("#input-github-token").placeholder = `${data.githubTokenMasked} (để trống để giữ nguyên)`;
+      $("#input-github-token").placeholder = `${data.githubTokenMasked} (leave blank to keep)`;
+    } else {
+      $("#input-github-token").placeholder = "ghp_... (paste your token)";
     }
 
-    try {
-      const authStatus = await api("/api/auth/status");
-      state.oauthEnabled = Boolean(authStatus.oauthEnabled);
-    } catch {}
+    const authStatus = await api("/api/auth/status");
+    state.oauthEnabled = Boolean(authStatus.oauthEnabled);
+    $("#btn-login-github").hidden = !state.oauthEnabled;
+    $("#oauth-setup-note").hidden = state.oauthEnabled;
+    if (!state.oauthEnabled && !data.githubUser) $("#pat-settings").open = true;
 
     // AI Planner
     const geminiBadge = $("#gemini-status-badge");
     geminiBadge.className = "badge";
     if (data.hasGeminiKey) {
       geminiBadge.classList.add("ok");
-      geminiBadge.textContent = `✓ Gemini Flash (${data.geminiModel}) · 1.500 req/ngày`;
-      $("#input-gemini-key").placeholder = `${data.geminiKeyMasked} (để trống để giữ nguyên)`;
+      geminiBadge.textContent = "Gemini";
+      $("#ai-provider-name").textContent = data.geminiModel;
+      $("#ai-provider-hint").textContent = "Using your Gemini API key.";
+      $("#input-gemini-key").placeholder = `${data.geminiKeyMasked} (leave blank to keep)`;
     } else if (data.hasGithubToken) {
       geminiBadge.classList.add("ok");
-      geminiBadge.textContent = `✓ GitHub Models (gpt-4o-mini) · Mặc định`;
+      geminiBadge.textContent = "GitHub Models";
+      $("#ai-provider-name").textContent = "GitHub Models · gpt-4o-mini";
+      $("#ai-provider-hint").textContent =
+        "Uses your connected GitHub account. No separate key required.";
       $("#input-gemini-key").placeholder =
-        "AQ.Ab8... hoặc AIzaSy... (để trống để dùng GitHub Models)";
+        "AQ.Ab8... or AIzaSy... (leave blank to use GitHub Models)";
     } else {
       geminiBadge.classList.add("warn");
-      geminiBadge.textContent = "Chờ kết nối GitHub";
-      $("#input-gemini-key").placeholder = "AQ.Ab8... hoặc AIzaSy...";
+      geminiBadge.textContent = "Awaiting connection";
+      $("#ai-provider-name").textContent = "GitHub Models";
+      $("#ai-provider-hint").textContent =
+        "Connect GitHub to get started, or configure Gemini below.";
+      $("#input-gemini-key").placeholder = "AQ.Ab8... or AIzaSy...";
     }
 
     if (data.geminiModel) {
@@ -1258,23 +1349,20 @@ async function loadSettings() {
       alert.hidden = false;
       const reasons = [];
       if (data.missing.includes("missing_github_token"))
-        reasons.push("Nhập Personal Access Token của GitHub");
+        reasons.push("Connect your GitHub account");
       if (data.missing.includes("invalid_github_token"))
-        reasons.push("GitHub Token không hợp lệ hoặc đã hết hạn");
-      if (data.missing.includes("missing_repo"))
-        reasons.push("Nhập tên Repository cần quản lý (owner/name)");
+        reasons.push("GitHub token is invalid or expired");
+      if (data.missing.includes("missing_repo")) reasons.push("Select a repository (owner/name)");
       if (data.missing.includes("repo_not_found"))
-        reasons.push(
-          "Không tìm thấy Repository trên GitHub hoặc tài khoản không có quyền truy cập",
-        );
+        reasons.push("Repository not found or your account does not have access");
       if (data.missing.includes("missing_policy"))
-        reasons.push("Repository chưa khởi tạo AI-DLC policy (bấm nút Khởi tạo bên dưới)");
-      alert.innerHTML = `<strong>⚠️ Cần hoàn tất cấu hình để sử dụng:</strong><ul>${reasons.map((r) => `<li>${r}</li>`).join("")}</ul>`;
+        reasons.push("Initialize AI-DLC using the repository banner");
+      alert.replaceChildren(h("strong", {}, "Complete setup"), h("p", {}, reasons.join(" · ")));
     } else {
       alert.hidden = true;
     }
   } catch (err) {
-    log("fail", "Không thể tải cài đặt", { text: err.message });
+    log("fail", "Could not load settings", { text: err.message });
   }
 }
 
@@ -1288,7 +1376,7 @@ async function testGithubToken() {
       msgEl.hidden = false;
       if (res.ok) {
         msgEl.className = "test-msg ok small";
-        msgEl.textContent = `✓ Đã kết nối thành công: @${res.viewer.login} (ID: ${res.viewer.id})`;
+        msgEl.textContent = `✓ Connected as @${res.viewer.login} (ID: ${res.viewer.id})`;
         if (tokenVal) {
           await api("/api/settings", { githubToken: tokenVal });
           $("#input-github-token").value = "";
@@ -1298,57 +1386,34 @@ async function testGithubToken() {
         }
       } else {
         msgEl.className = "test-msg err small";
-        msgEl.textContent = `✗ Lỗi kiểm tra: ${res.error}`;
+        msgEl.textContent = `✗ Connection test failed: ${res.error}`;
       }
     } catch (err) {
       msgEl.hidden = false;
       msgEl.className = "test-msg err small";
-      msgEl.textContent = `✗ Lỗi: ${err.message}`;
-    }
-  });
-}
-
-async function connectWithGhCli() {
-  const button = $("#btn-connect-gh-cli");
-  const feedback = $("#github-connect-feedback");
-  if (feedback) feedback.hidden = true;
-
-  await withBusy(button, async () => {
-    try {
-      const res = await api("/api/auth/gh-cli", {});
-      if (feedback) {
-        feedback.className = "test-msg ok small";
-        feedback.textContent = `✓ ${res.message}`;
-        feedback.hidden = false;
-      }
-      log("ok", res.message);
-      await loadSettings();
-      await syncSession();
-      await loadUserRepos(true);
-    } catch (err) {
-      if (feedback) {
-        feedback.className = "test-msg err small";
-        feedback.textContent = `✗ ${err.message}`;
-        feedback.hidden = false;
-      }
+      msgEl.textContent = `✗ Error: ${err.message}`;
     }
   });
 }
 
 async function disconnectGithub() {
-  const confirmed = confirm("Bạn có chắc chắn muốn ngắt kết nối tài khoản GitHub này?");
+  const confirmed = confirm(
+    "Sign out and clear your GitHub token and Gemini key across all tabs on this origin?",
+  );
   if (!confirmed) return;
   try {
     await api("/api/auth/disconnect", {});
-    log("ok", "Đã ngắt kết nối GitHub");
+    log("ok", "Signed out and cleared GitHub token and Gemini key");
     state.userRepos = [];
     state.items = [];
+    state.draft = null;
+    renderDraft();
     await loadSettings();
     await syncSession();
     if (state.session?.status === "ready") {
       await loadItems();
     } else {
-      $("#items-list")?.replaceChildren();
+      renderItems();
       const countEpics = $("#count-epics");
       const countStories = $("#count-stories");
       const countTasks = $("#count-tasks");
@@ -1357,7 +1422,7 @@ async function disconnectGithub() {
       if (countTasks) countTasks.textContent = "0";
     }
   } catch (err) {
-    logError("Ngắt kết nối thất bại", err);
+    logError("Sign-out failed", err);
   }
 }
 
@@ -1375,15 +1440,15 @@ async function testGeminiKey() {
       msgEl.hidden = false;
       if (res.ok) {
         msgEl.className = "test-msg ok small";
-        msgEl.textContent = `✓ Kết nối Gemini AI thành công (${modelVal})!`;
+        msgEl.textContent = `✓ Connected to Gemini (${modelVal})`;
       } else {
         msgEl.className = "test-msg err small";
-        msgEl.textContent = `✗ Lỗi kiểm tra: ${res.error}`;
+        msgEl.textContent = `✗ Connection test failed: ${res.error}`;
       }
     } catch (err) {
       msgEl.hidden = false;
       msgEl.className = "test-msg err small";
-      msgEl.textContent = `✗ Lỗi: ${err.message}`;
+      msgEl.textContent = `✗ Error: ${err.message}`;
     }
   });
 }
@@ -1404,18 +1469,18 @@ async function saveSettings() {
       await api("/api/settings", patch);
       $("#input-github-token").value = "";
       $("#input-gemini-key").value = "";
-      statusMsg.className = "save-status-msg ok";
-      statusMsg.textContent = "✓ Đã lưu cài đặt!";
-      log("ok", "Đã cập nhật cài đặt hệ thống");
+      log("ok", "Settings updated");
       await loadSettings();
       await syncSession();
       if (patch.githubToken) {
         await loadUserRepos(true);
       }
+      statusMsg.className = "save-status-msg ok";
+      statusMsg.textContent = "Settings saved";
     } catch (err) {
       statusMsg.className = "save-status-msg err";
-      statusMsg.textContent = `✗ Lỗi khi lưu: ${err.message}`;
-      log("fail", "Lưu cài đặt thất bại", { text: err.message });
+      statusMsg.textContent = `✗ Save failed: ${err.message}`;
+      log("fail", "Could not save settings", { text: err.message });
     }
   });
 }
@@ -1430,7 +1495,7 @@ function renderRolesSection(policyRoles, canEdit, policyStatus) {
 
   if (policyStatus === "missing" || !policyRoles) {
     badge.className = "badge warn";
-    badge.textContent = "Chưa có Policy";
+    badge.textContent = "No policy";
     noPolicyMsg.hidden = false;
     contentSec.hidden = true;
     return;
@@ -1439,7 +1504,7 @@ function renderRolesSection(policyRoles, canEdit, policyStatus) {
   noPolicyMsg.hidden = true;
   contentSec.hidden = false;
   badge.className = "badge " + (canEdit ? "ok" : "story");
-  badge.textContent = canEdit ? "✓ Quyền Maintainer" : "Chỉ xem (Read-only)";
+  badge.textContent = canEdit ? "Maintainer access" : "Read-only";
 
   state.canEditRoles = Boolean(canEdit);
   state.rolesDraft = {
@@ -1469,7 +1534,7 @@ function renderRoleChips() {
         h(
           "span",
           { class: "muted small", style: "padding: 6px 0; font-style: italic" },
-          "(Chưa có thành viên nào)",
+          "(No members yet)",
         ),
       );
     } else {
@@ -1487,7 +1552,7 @@ function renderRoleChips() {
             {
               class: "member-chip-remove",
               type: "button",
-              title: `Xóa @${m.login} khỏi ${role.toUpperCase()}`,
+              title: `Remove @${m.login} from ${role.toUpperCase()}`,
             },
             "✕",
           );
@@ -1520,13 +1585,9 @@ async function handleAddMember(role) {
   let username = input.value.trim().replace(/^@/, "");
   if (!username) {
     const roleName =
-      role === "po"
-        ? "Product Owner (PO)"
-        : role === "dev"
-          ? "Developer (DEV)"
-          : "Maintainer (Quản trị)";
+      role === "po" ? "Product Owner (PO)" : role === "dev" ? "Developer (DEV)" : "Maintainer";
     const promptVal = prompt(
-      `Nhập GitHub username để thêm vào vai trò ${roleName} (ví dụ: tadev999 hoặc octocat):`,
+      `Enter a GitHub username to add as ${roleName} (for example: tadev999 or octocat):`,
     );
     if (!promptVal || !promptVal.trim()) {
       input.focus();
@@ -1540,26 +1601,26 @@ async function handleAddMember(role) {
     try {
       const res = await api("/api/users/resolve", { username });
       if (state.rolesDraft[role].some((m) => m.id === res.id)) {
-        alert(`@${res.login} đã có trong danh sách ${role.toUpperCase()} rồi.`);
+        alert(`@${res.login} is already in ${role.toUpperCase()}.`);
         return;
       }
       state.rolesDraft[role].push({ id: res.id, login: res.login });
       input.value = "";
       renderRoleChips();
-      log("ok", `Đã thêm @${res.login} vào danh sách nháp của ${role.toUpperCase()}`);
+      log("ok", `Added @${res.login} to the ${role.toUpperCase()} draft`);
     } catch (err) {
-      alert(`Không thể thêm @${username}: ${err.message}`);
+      alert(`Could not add @${username}: ${err.message}`);
     }
   });
 }
 
 function removeRoleMember(role, memberId) {
   if (role === "po" && state.rolesDraft.po.length <= 1) {
-    alert("Dự án phải có ít nhất 1 Product Owner (PO). Không thể xóa!");
+    alert("At least one Product Owner is required. This member cannot be removed.");
     return;
   }
   if (role === "maintainer" && state.rolesDraft.maintainer.length <= 1) {
-    alert("Dự án phải có ít nhất 1 Maintainer để quản trị. Không thể xóa!");
+    alert("At least one Maintainer is required. This member cannot be removed.");
     return;
   }
   state.rolesDraft[role] = state.rolesDraft[role].filter((m) => m.id !== memberId);
@@ -1576,31 +1637,31 @@ async function handleSaveRoles() {
   }
 
   if (state.rolesDraft.po.length === 0) {
-    alert("Dự án phải có ít nhất 1 Product Owner (PO).");
+    alert("At least one Product Owner is required.");
     return;
   }
   if (state.rolesDraft.maintainer.length === 0) {
-    alert("Dự án phải có ít nhất 1 Maintainer.");
+    alert("At least one Maintainer is required.");
     return;
   }
 
   await withBusy(btn, async () => {
     try {
-      log("pending", "Đang cập nhật phân quyền lên GitHub (.github/huddle60/policy.yml)...");
+      log("pending", "Updating roles on GitHub (.github/huddle60/policy.yml)...");
       await api("/api/policy/roles", { roles: state.rolesDraft });
       if (msg) {
         msg.className = "save-status-msg ok";
-        msg.textContent = "✓ Đã cập nhật phân quyền lên GitHub!";
+        msg.textContent = "✓ Roles saved to GitHub";
       }
-      log("ok", "Đã cập nhật chính sách phân quyền thành công trên GitHub");
+      log("ok", "Access policy updated on GitHub");
       await syncSession();
       await loadSettings();
     } catch (err) {
       if (msg) {
         msg.className = "save-status-msg err";
-        msg.textContent = `✗ Lỗi khi lưu: ${err.message}`;
+        msg.textContent = `✗ Save failed: ${err.message}`;
       }
-      log("fail", "Cập nhật phân quyền thất bại", { text: err.message });
+      log("fail", "Could not update roles", { text: err.message });
     }
   });
 }
@@ -1614,10 +1675,7 @@ function updateRepoInitBanner() {
     return;
   }
   const repoStr = `${session.repo.owner}/${session.repo.repo}`;
-  const isMissingPolicy =
-    session.missing?.includes("missing_policy") ||
-    session.policyStatus === "missing" ||
-    (state.settings && state.settings.policyStatus === "missing");
+  const isMissingPolicy = session.missing?.includes("missing_policy");
 
   if (!isMissingPolicy) {
     banner.hidden = true;
@@ -1642,10 +1700,10 @@ function updateRepoInitBanner() {
     banner.classList.remove("info-mode");
     if (iconEl) iconEl.textContent = "⚠️";
     if (titleEl) {
-      titleEl.innerHTML = `Kho lưu trữ <code id="banner-repo-name">${repoStr}</code> chưa được kích hoạt chuẩn AI-DLC.`;
+      titleEl.innerHTML = `AI-DLC is not initialized for <code id="banner-repo-name">${repoStr}</code>.`;
     }
     if (descEl) {
-      descEl.innerHTML = `Chưa có nhãn chuẩn <code>huddle60:*</code>, nhánh bằng chứng <code>huddle60-evidence</code> hoặc file <code>.github/huddle60/policy.yml</code>.`;
+      descEl.innerHTML = `No AI-DLC policy was found on the default branch. Initialize the repository to create <code>.github/huddle60/policy.yml</code> and the supporting labels and evidence branch.`;
     }
     if (btnInit) btnInit.hidden = false;
     if (btnViewGh) btnViewGh.hidden = true;
@@ -1654,10 +1712,11 @@ function updateRepoInitBanner() {
     banner.classList.add("info-mode");
     if (iconEl) iconEl.textContent = "💡";
     if (titleEl) {
-      titleEl.innerHTML = `Kho lưu trữ <code id="banner-repo-name">${repoStr}</code> chưa thiết lập quy trình AI-DLC.`;
+      titleEl.innerHTML = `AI-DLC is not configured for <code id="banner-repo-name">${repoStr}</code>.`;
     }
     if (descEl) {
-      descEl.innerHTML = `Dự án này chưa kích hoạt bảng quy trình Huddle60. Bạn có thể chọn repository khác từ menu trên hoặc xem mã nguồn trên GitHub.`;
+      descEl.textContent =
+        "This project has not enabled Huddle60. Select another repository above or view the source on GitHub.";
     }
     if (btnInit) btnInit.hidden = true;
     if (btnViewGh) {
@@ -1672,13 +1731,13 @@ function updateRepoInitBanner() {
 
 async function initRepository() {
   const confirm = await openDialog({
-    title: "Khởi tạo AI-DLC cho Repository",
+    title: "Initialize AI-DLC",
     body: h(
       "p",
       {},
-      "Thao tác này sẽ tạo nhãn huddle60:*, tạo nhánh huddle60-evidence và commit file policy vào default branch của repository.",
+      "This creates huddle60:* labels, the huddle60-evidence branch, and a policy file on the repository's default branch.",
     ),
-    okLabel: "Khởi tạo ngay",
+    okLabel: "Initialize",
   });
   if (confirm !== "ok") return;
 
@@ -1686,14 +1745,14 @@ async function initRepository() {
   const runWithBusy = btn ? (fn) => withBusy(btn, fn) : (fn) => fn();
 
   await runWithBusy(async () => {
-    const update = log("pending", "Đang khởi tạo Repository…");
+    const update = log("pending", "Initializing repository…");
     try {
       const res = await api("/api/repo/init", {});
-      update("ok", res.message || "Khởi tạo thành công!");
+      update("ok", res.message || "Repository initialized.");
       await loadSettings();
       await syncSession();
     } catch (err) {
-      update("fail", "Khởi tạo thất bại", { text: err.message });
+      update("fail", "Initialization failed", { text: err.message });
     }
   });
 }
@@ -1701,8 +1760,10 @@ async function initRepository() {
 // ---------- boot ----------
 
 function switchView(view) {
-  for (const tab of document.querySelectorAll(".tab"))
+  for (const tab of document.querySelectorAll(".tab")) {
     tab.classList.toggle("active", tab.dataset.view === view);
+    tab.setAttribute("aria-selected", String(tab.dataset.view === view));
+  }
   $("#view-items").hidden = view !== "items";
   $("#view-plan").hidden = view !== "plan";
   $("#view-settings").hidden = view !== "settings";
@@ -1719,17 +1780,31 @@ function fatal(message) {
 }
 
 async function switchRepository(repo) {
+  if (state.switchingRepository) return;
+  state.switchingRepository = true;
+  state.repositoryVersion++;
+  state.items = [];
+  state.pending.clear();
+  state.collapsed.clear();
+  state.settings = null;
+  state.query = "";
+  $("#search").value = "";
+  state.itemsStatus = "loading";
+  $("#repo-switcher-select").disabled = true;
+  $("#refresh").disabled = true;
+  renderItems();
+  switchView("items");
   try {
-    log("pending", `Đang chuyển sang repository: ${repo}...`);
+    log("pending", `Switching to repository: ${repo}...`);
     await api("/api/settings", { repo });
-    log("ok", `Đã chuyển sang repository: ${repo}`);
-    await syncSession();
-    switchView("items");
-    if (state.session?.status === "ready") {
-      await loadItems();
-    }
+    log("ok", `Switched to repository: ${repo}`);
   } catch (err) {
-    logError(`Chuyển sang ${repo} thất bại`, err);
+    logError(`Could not switch to ${repo}`, err);
+  } finally {
+    state.switchingRepository = false;
+    state.itemsStatus = "idle";
+    $("#refresh").disabled = false;
+    await syncSession();
   }
 }
 
@@ -1752,7 +1827,7 @@ function renderRepoSwitcher() {
   if (!isConnected) {
     const unauthOpt = document.createElement("option");
     unauthOpt.value = "";
-    unauthOpt.textContent = "Chưa có repository";
+    unauthOpt.textContent = "No repository";
     unauthOpt.selected = true;
     unauthOpt.disabled = true;
     select.appendChild(unauthOpt);
@@ -1762,14 +1837,14 @@ function renderRepoSwitcher() {
     return;
   }
 
-  select.disabled = false;
+  select.disabled = state.switchingRepository;
   const currentRepoStr = session.repo ? `${session.repo.owner}/${session.repo.repo}` : "";
   const recentRepos = session.recentRepos || (currentRepoStr ? [currentRepoStr] : []);
 
   if (!currentRepoStr) {
     const defaultOpt = document.createElement("option");
     defaultOpt.value = "";
-    defaultOpt.textContent = "Chưa chọn repo...";
+    defaultOpt.textContent = "Select a repository...";
     defaultOpt.selected = true;
     defaultOpt.disabled = true;
     select.appendChild(defaultOpt);
@@ -1778,7 +1853,7 @@ function renderRepoSwitcher() {
   // 2. Recent repos group
   if (recentRepos.length > 0) {
     const recentGroup = document.createElement("optgroup");
-    recentGroup.label = "🕒 Dự án gần đây";
+    recentGroup.label = "Recent repositories";
     for (const r of recentRepos) {
       const opt = document.createElement("option");
       opt.value = r;
@@ -1792,16 +1867,16 @@ function renderRepoSwitcher() {
   // 3. All repositories from GitHub
   if (state.loadingRepos) {
     const loadingGroup = document.createElement("optgroup");
-    loadingGroup.label = "📂 Tất cả Repositories (GitHub)";
+    loadingGroup.label = "All GitHub repositories";
     const loadingOpt = document.createElement("option");
     loadingOpt.disabled = true;
     loadingOpt.value = "";
-    loadingOpt.textContent = "⏳ Đang tải tất cả repos từ GitHub...";
+    loadingOpt.textContent = "Loading GitHub repositories...";
     loadingGroup.appendChild(loadingOpt);
     select.appendChild(loadingGroup);
   } else if (state.userRepos && state.userRepos.length > 0) {
     const allGroup = document.createElement("optgroup");
-    allGroup.label = `📂 Tất cả Repositories (${state.userRepos.length})`;
+    allGroup.label = `All repositories (${state.userRepos.length})`;
     for (const r of state.userRepos) {
       const opt = document.createElement("option");
       opt.value = r.fullName;
@@ -1814,16 +1889,16 @@ function renderRepoSwitcher() {
 
   // 4. Action options
   const actionGroup = document.createElement("optgroup");
-  actionGroup.label = "Thao tác";
+  actionGroup.label = "Actions";
 
   const refreshOpt = document.createElement("option");
   refreshOpt.value = "__refresh__";
-  refreshOpt.textContent = "🔄 Tải lại danh sách từ GitHub...";
+  refreshOpt.textContent = "Refresh from GitHub...";
   actionGroup.appendChild(refreshOpt);
 
   const addOpt = document.createElement("option");
   addOpt.value = "__add__";
-  addOpt.textContent = "➕ Nhập repository khác...";
+  addOpt.textContent = "Enter another repository...";
   actionGroup.appendChild(addOpt);
 
   select.appendChild(actionGroup);
@@ -1870,21 +1945,22 @@ async function removeRecentRepository(repo) {
     await loadSettings();
     await syncSession();
   } catch (err) {
-    logError(`Xóa ${repo} thất bại`, err);
+    logError(`Could not remove ${repo}`, err);
   }
 }
 
 async function syncSession() {
+  const version = state.repositoryVersion;
   try {
-    state.session = await api("/api/session");
+    const session = await api("/api/session");
+    if (version !== state.repositoryVersion) return;
+    state.session = session;
   } catch (error) {
-    if (error.code === "E_TOKEN") {
-      sessionStorage.removeItem(TOKEN_KEY);
-      fatal(
-        "Session token không hợp lệ (server có thể đã khởi động lại).\nVui lòng tải lại trang (F5) hoặc mở URL có token từ terminal.",
-      );
-      return;
-    }
+    if (version !== state.repositoryVersion) return;
+    state.items = [];
+    state.itemsStatus = "error";
+    state.itemsError = error.message;
+    renderItems();
     fatal(`${error.code ?? "E"}: ${error.message}`);
     return;
   }
@@ -1894,13 +1970,16 @@ async function syncSession() {
 
   const tenantBadge = $("#tenant-badge");
   if (tenantBadge) {
+    tenantBadge.hidden = false;
     if (session.tenant) {
-      tenantBadge.textContent = `@${session.tenant}`;
-      tenantBadge.title = `Không gian làm việc: ${session.tenant}`;
+      tenantBadge.textContent = `@${session.tenant} ▾`;
+      tenantBadge.title = `Workspace: ${session.tenant}`;
       tenantBadge.hidden = false;
       document.title = `huddle60 · ${session.tenant}`;
     } else {
-      tenantBadge.hidden = true;
+      tenantBadge.textContent = "Choose workspace ▾";
+      tenantBadge.title = "Choose a GitHub account or organization";
+      document.title = "huddle60";
       document.title = "huddle60";
     }
   }
@@ -1940,30 +2019,30 @@ async function syncSession() {
   if (session.viewer) {
     $("#viewer").textContent = `@${session.viewer.login}`;
   } else {
-    $("#viewer").textContent = "👁️ Khách vãng lai";
+    $("#viewer").textContent = "Guest";
   }
 
   $("#roles").replaceChildren(
     ...(session.roles && session.roles.length
       ? session.roles.map((role) => h("span", { class: "badge story" }, role))
       : isReady
-        ? [h("span", { class: "badge story" }, "Chỉ xem (Read-only)")]
-        : [h("span", { class: "badge warn" }, "Cần cài đặt")]),
+        ? [h("span", { class: "badge story" }, "Read-only")]
+        : [h("span", { class: "badge warn" }, "Setup required")]),
   );
 
   const dot = $("#planner-status");
   dot.classList.toggle("on", Boolean(session.planner));
   dot.title = session.planner
     ? `planner: ${session.planner.model}`
-    : "planner off (cần kết nối GitHub hoặc Gemini Key)";
+    : "Planner unavailable (connect GitHub or add a Gemini key)";
 
   if (!session.planner) {
     $("#plan-generate").disabled = true;
-    $("#plan-hint").textContent = "Chưa kết nối AI: hãy kết nối GitHub để dùng miễn phí";
+    $("#plan-hint").textContent = "Connect GitHub or configure Gemini to use the planner";
   } else {
     $("#plan-generate").disabled = false;
     const providerName = session.planner.provider === "gemini" ? "Google Gemini" : "GitHub Models";
-    $("#plan-hint").textContent = `✨ Đang dùng AI: ${session.planner.model} (${providerName})`;
+    $("#plan-hint").textContent = `Using ${session.planner.model} (${providerName})`;
   }
 
   updateRepoInitBanner();
@@ -1978,42 +2057,9 @@ async function syncSession() {
   }
 
   if (!isReady) {
-    const list = $("#items-list");
-    if (list) {
-      list.replaceChildren(
-        h(
-          "tr",
-          {},
-          h(
-            "td",
-            { colspan: 6, style: "text-align: center; padding: 48px 16px;" },
-            h(
-              "div",
-              {
-                style:
-                  "max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; gap: 12px;",
-              },
-              h("div", { style: "font-size: 32px;" }, "📂"),
-              h("h3", { style: "margin: 0;" }, "Chưa kết nối Repository"),
-              h(
-                "p",
-                { class: "small muted", style: "margin: 0; line-height: 1.5;" },
-                "Không gian làm việc này chưa chọn kho lưu trữ nào. Vui lòng kết nối GitHub hoặc nhập tên repository để bắt đầu quản lý công việc.",
-              ),
-              h(
-                "button",
-                {
-                  class: "btn primary",
-                  onclick: () => switchView("settings"),
-                  style: "margin-top: 8px;",
-                },
-                "⚙️ Mở Cài đặt để kết nối",
-              ),
-            ),
-          ),
-        ),
-      );
-    }
+    state.items = [];
+    state.itemsStatus = "idle";
+    renderItems();
   } else {
     if (!hasRole("po") && !hasRole("dev")) {
       state.filter = "all";
@@ -2044,10 +2090,67 @@ function getTargetRepoFromUrl() {
 }
 
 async function boot() {
-  if (!token) {
-    fatal("Thiếu session token.\nMở đúng URL mà lệnh `huddle60 ui` in ra trong terminal.");
-    return;
+  const workspaceDialog = $("#workspace-dialog");
+  $("#tenant-badge").addEventListener("click", () => {
+    $("#workspace-owner").value = state.session?.tenant || "";
+    workspaceDialog.showModal();
+  });
+  $("#workspace-cancel").addEventListener("click", () => workspaceDialog.close());
+  $("#workspace-switch-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const owner = $("#workspace-owner").value.trim().toLowerCase();
+    const target = new URL("/app", location.origin);
+    target.searchParams.set("tenant", owner);
+    if (
+      owner !== state.session?.tenant &&
+      (!state.draft || confirm("Switch workspace? Unsaved plan drafts will be discarded."))
+    ) {
+      location.assign(target.href);
+    } else {
+      workspaceDialog.close();
+    }
+  });
+  const engine = await loadEngine();
+  $("#remember-credentials").checked = engine.rememberCredentials;
+  const match = /(?:^|&)gh_token=([^&]+)/.exec(location.hash.slice(1));
+  if (match) {
+    history.replaceState(null, "", location.pathname + (location.search || ""));
+    try {
+      await api("/api/settings", { githubToken: decodeURIComponent(match[1]) });
+    } catch (error) {
+      logError("Could not save GitHub sign-in", error);
+    }
   }
+
+  $("#remember-credentials").addEventListener("change", (event) => {
+    try {
+      engine.setRememberCredentials(event.target.checked);
+      log(
+        "ok",
+        event.target.checked
+          ? "Remember this device enabled"
+          : "Sign-in will only be kept in this tab",
+      );
+    } catch (error) {
+      event.target.checked = engine.rememberCredentials;
+      logError("Could not change credential storage", error);
+    }
+  });
+  window.addEventListener("huddle60-credentials-changed", async () => {
+    state.userRepos = [];
+    state.items = [];
+    state.draft = null;
+    state.pending.clear();
+    renderDraft();
+    $("#input-github-token").value = "";
+    $("#input-gemini-key").value = "";
+    renderItems();
+    $("#spec-dialog").close();
+    switchView("settings");
+    log("pending", "Credentials changed in another tab. Plan drafts must be recreated.");
+    await syncSession();
+    await loadSettings();
+  });
 
   for (const chip of document.querySelectorAll("#filters .chip")) {
     chip.dataset.label = chip.textContent;
@@ -2071,6 +2174,7 @@ async function boot() {
   $("#log-clear").addEventListener("click", () => $("#log").replaceChildren());
   $("#plan-form").addEventListener("submit", generatePlan);
   $("#refine-form").addEventListener("submit", refinePlan);
+  $("#accept-suggestions-btn").addEventListener("click", acceptSuggestions);
   $("#create-btn").addEventListener("click", createIssues);
   initPlanAttachments();
 
@@ -2090,8 +2194,8 @@ async function boot() {
       event.target.value = current;
       const tenant = state.session?.tenant;
       const promptMsg = tenant
-        ? `Nhập tên Repository của không gian @${tenant} (ví dụ: ${tenant}/ten-repo hoặc ten-repo):`
-        : "Nhập tên Repository mới trên GitHub (dạng: owner/repo):";
+        ? `Enter a repository in @${tenant} (for example: ${tenant}/my-repo or my-repo):`
+        : "Enter a GitHub repository (owner/repo):";
       const customRepo = prompt(promptMsg);
       if (customRepo && customRepo.trim()) {
         let repoToSwitch = customRepo.trim();
@@ -2109,15 +2213,17 @@ async function boot() {
 
   // Settings handlers
   $("#btn-test-github").addEventListener("click", testGithubToken);
-  $("#btn-connect-gh-cli")?.addEventListener("click", connectWithGhCli);
   $("#btn-disconnect-github")?.addEventListener("click", disconnectGithub);
   $("#btn-login-github")?.addEventListener("click", (e) => {
+    if (state.oauthEnabled) {
+      e.currentTarget.href = `/api/auth/github?returnUrl=${encodeURIComponent(location.pathname + location.search)}`;
+      return;
+    }
     if (!state.oauthEnabled) {
       e.preventDefault();
       alert(
-        "Tính năng Đăng nhập GitHub OAuth chưa cấu hình GITHUB_CLIENT_ID trên server.\n\n" +
-          "👉 Mẹo nhanh: Bạn có thể bấm nút '⚡ Tự động kết nối từ GitHub CLI (gh)' ngay bên cạnh để kết nối 1-click không cần cấu hình gì!\n" +
-          "Hoặc nhập Personal Access Token (PAT) bên dưới.",
+        "GitHub OAuth is not configured on this server (GITHUB_CLIENT_ID is missing).\n\n" +
+          "Use a Personal Access Token (PAT) below.",
       );
     }
   });
@@ -2143,7 +2249,7 @@ async function boot() {
       e.preventDefault();
       handleAddMember("dev");
     }
-  });   
+  });
   $("#input-add-maintainer")?.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
@@ -2162,12 +2268,17 @@ async function boot() {
   await syncSession();
   loadSettings().catch(() => {});
   if (state.session?.status === "ready") {
-    log("ok", `Đã kết nối · @${state.session.viewer.login}`);
+    log(
+      "ok",
+      state.session.viewer
+        ? `Connected · @${state.session.viewer.login}`
+        : "Viewing as a guest · sign in to GitHub to make changes",
+    );
   }
 
   // Check URL for target repo (e.g. /skill_bento or /tadev999/skill_bento or ?repo=...)
   const targetCandidate = getTargetRepoFromUrl();
-  if (targetCandidate && state.session?.status === "ready") {
+  if (targetCandidate) {
     let fullRepo = targetCandidate;
     if (!fullRepo.includes("/")) {
       const owner =
@@ -2191,4 +2302,4 @@ async function boot() {
   window.addEventListener("hashchange", focusTargetTask);
 }
 
-boot();
+boot().catch((error) => fatal(`Could not start the app: ${error.message}`));

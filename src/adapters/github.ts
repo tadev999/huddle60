@@ -2,6 +2,7 @@ import { createAppAuth } from "@octokit/auth-app";
 import { retry } from "@octokit/plugin-retry";
 import { Octokit } from "@octokit/rest";
 import { AiDlcError } from "../core/errors.js";
+import { base64ToUtf8 } from "../core/encoding.js";
 import type {
   Actor,
   CommentData,
@@ -9,6 +10,7 @@ import type {
   IssueData,
   LocalGitHubPort,
   PullRequestData,
+  RepoFile,
   RepoRef,
   WorkflowRunData,
 } from "../ports.js";
@@ -18,7 +20,7 @@ export type GitHubClient = InstanceType<typeof RetryingOctokit>;
 
 const USER_AGENT = "huddle60/0.1.0";
 
-const defaultLog = process.env.AI_DLC_DEBUG
+const defaultLog = globalThis.process?.env?.AI_DLC_DEBUG
   ? undefined
   : {
       debug: () => {},
@@ -27,8 +29,12 @@ const defaultLog = process.env.AI_DLC_DEBUG
       error: () => {},
     };
 
-export function octokitFromToken(token: string): GitHubClient {
-  return new RetryingOctokit({ auth: token, userAgent: USER_AGENT, log: defaultLog });
+export function octokitFromToken(token: string | null): GitHubClient {
+  return new RetryingOctokit({
+    ...(token ? { auth: token } : {}),
+    userAgent: USER_AGENT,
+    log: defaultLog,
+  });
 }
 
 export function octokitForInstallation(
@@ -110,6 +116,7 @@ export async function connectRepository(
 
 export class OctokitGitHub implements LocalGitHubPort {
   private readonly projectIds = new Map<string, string>();
+  private repoFiles: { files: RepoFile[]; expiresAt: number } | null = null;
 
   constructor(
     readonly octokit: GitHubClient,
@@ -148,7 +155,7 @@ export class OctokitGitHub implements LocalGitHubPort {
         ...(ref ? { ref } : {}),
       });
       if (Array.isArray(data) || data.type !== "file" || !("content" in data)) return null;
-      return Buffer.from(data.content, "base64").toString("utf8");
+      return base64ToUtf8(data.content);
     } catch (error) {
       if (isStatus(error, 404)) return null;
       throw error;
@@ -166,10 +173,26 @@ export class OctokitGitHub implements LocalGitHubPort {
     }
   }
 
+  async listRepoFiles(): Promise<RepoFile[]> {
+    if (this.repoFiles && Date.now() < this.repoFiles.expiresAt) return this.repoFiles.files;
+    const { data } = await this.octokit.rest.git.getTree({
+      ...this.base,
+      tree_sha: await this.getDefaultBranch(),
+      recursive: "1",
+    });
+    const files = (data.tree ?? [])
+      .filter((item) => item.type === "blob" && item.path)
+      .map((item) => ({ path: item.path as string, size: item.size ?? 0 }));
+    this.repoFiles = { files, expiresAt: Date.now() + 5 * 60_000 };
+    return files;
+  }
+
   async getCodebaseContext(): Promise<string> {
     try {
       const branch = await this.getDefaultBranch();
-      const parts: string[] = [`Repository: ${this.repo.owner}/${this.repo.repo} (default branch: ${branch})`];
+      const parts: string[] = [
+        `Repository: ${this.repo.owner}/${this.repo.repo} (default branch: ${branch})`,
+      ];
 
       // 1. Fetch file tree
       try {
@@ -209,7 +232,9 @@ export class OctokitGitHub implements LocalGitHubPort {
             .slice(0, 150);
 
           if (files.length > 0) {
-            parts.push(`Key files in repository (${files.length} files):\n${files.map((f) => `- ${f}`).join("\n")}`);
+            parts.push(
+              `Key files in repository (${files.length} files):\n${files.map((f) => `- ${f}`).join("\n")}`,
+            );
           }
         }
       } catch {

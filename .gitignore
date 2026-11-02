@@ -1,5 +1,7 @@
 node_modules/
 dist/
+ui/engine.js
+ui/engine.js.map
 coverage/
 .env
 .env.*

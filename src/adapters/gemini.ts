@@ -1,4 +1,4 @@
-import { setTimeout as delay } from "node:timers/promises";
+import { base64ToUtf8, delay } from "../core/encoding.js";
 import { ApiError, GoogleGenAI } from "@google/genai";
 import { AiDlcError } from "../core/errors.js";
 import type { AttachmentPart, ModelPort, ModelUsage } from "../ports.js";
@@ -50,7 +50,7 @@ export class GeminiModel implements ModelPort {
               att.mimeType.includes("csv");
             if (isText) {
               try {
-                const textContent = Buffer.from(att.dataBase64, "base64").toString("utf8");
+                const textContent = base64ToUtf8(att.dataBase64);
                 parts.push({
                   text: `\n<attached_file name="${att.name || "document"}">\n${textContent}\n</attached_file>`,
                 });

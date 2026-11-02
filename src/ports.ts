@@ -52,6 +52,11 @@ export interface WorkflowRunData {
 
 export type CommitState = "success" | "failure" | "pending" | "error";
 
+export interface RepoFile {
+  path: string;
+  size: number;
+}
+
 /** The subset of the GitHub API used by AI-DLC, scoped to one repository installation. */
 export interface GitHubPort {
   readonly repo: RepoRef;
@@ -93,6 +98,8 @@ export interface LocalGitHubPort extends GitHubPort {
     limit: number,
   ): Promise<WorkflowRunData[]>;
   getCodebaseContext?(): Promise<string>;
+  /** Blob paths and sizes on the default branch. */
+  listRepoFiles?(): Promise<RepoFile[]>;
   ensureLabel(label: {
     name: string;
     color: string;

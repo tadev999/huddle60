@@ -1,19 +1,33 @@
 <!doctype html>
-<html lang="vi">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>huddle60 · AI-DLC Platform for Startups</title>
+    <meta
+      name="description"
+      content="A 60-second huddle for startup POs and developers to align on one feature: clear scope, testable acceptance criteria, and shared context for implementation."
+    />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css" />
+    <script src="/theme.js?v=20261102_8"></script>
+    <link rel="stylesheet" href="/styles.css?v=20261102_10" />
   </head>
   <body class="landing-body">
     <header class="topbar">
       <div class="brand">
-        <span class="prompt">&gt;</span> huddle60<span class="cursor">_</span>
+        <a class="brand-home" href="/" aria-label="huddle60 — Home">huddle<span>60</span></a>
         <span class="badge ok">AI-DLC</span>
       </div>
       <div class="who">
+        <label class="theme-control" for="theme-select">
+          <span>Theme</span>
+          <select id="theme-select" aria-label="Theme">
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </label>
+        <span id="theme-status" class="theme-status" role="status"></span>
         <a
           href="https://github.com/tadev999/huddle60"
           target="_blank"
@@ -21,93 +35,105 @@
           class="btn ghost tiny"
           >↗ GitHub</a
         >
-        <a href="/app" class="btn primary tiny">Mở App</a>
+        <a href="/app" class="btn primary tiny">Open app</a>
       </div>
     </header>
 
     <main class="landing-main">
       <section class="hero-section">
-        <div class="hero-badge">AI-DLC (AI Development Life Cycle) Protocol</div>
-        <h1 class="hero-title">
-          Đưa AI vào phát triển phần mềm cho <span class="accent-text">Startup</span> & Đội ngũ linh
-          hoạt
-        </h1>
-        <p class="hero-desc">
-          Biến một câu ý tưởng của Founder thành kế hoạch kiểm thử được (Vertical Testable Slice)
-          trong 60 giây. Kết nối liền mạch giữa con người kinh doanh (PO) và kỹ thuật (DEV/AI
-          Agent).
-          <strong>100% Git-Native — Không lưu trữ mã nguồn của bạn.</strong>
-        </p>
+        <div class="hero-copy">
+          <div class="hero-badge">Built for startups / PO + DEV + AI</div>
+          <h1 class="hero-title">
+            60 seconds. One feature.<br />
+            <span class="accent-text">Same page.</span>
+          </h1>
+          <p class="hero-desc">
+            PO, DEV, and AI — aligned on what to build and what “done” means.
+            <strong
+              >Git-native by design — no project data is persisted on huddle60 servers.</strong
+            >
+          </p>
+        </div>
 
         <div class="workspace-card card">
-          <h3>🚀 Tạo hoặc Mở Không gian làm việc cho Công ty của bạn</h3>
-          <p class="small muted">
-            Mỗi công ty sở hữu một không gian độc lập, đồng bộ trực tiếp với GitHub Organization của
-            bạn:
-          </p>
+          <div class="workspace-chrome" aria-hidden="true">
+            <span class="terminal-dots"><i></i><i></i><i></i></span>
+            <span>huddle60 / workspace</span>
+          </div>
+          <h3>Open a GitHub workspace</h3>
+          <p class="small muted">Enter the username or organization that owns your repository.</p>
 
           <form id="workspace-form" class="workspace-form">
+            <label for="workspace-slug">GitHub username / Organization</label>
             <div class="workspace-input-wrap">
               <span class="workspace-prefix">https://</span>
               <input
                 id="workspace-slug"
                 type="text"
-                placeholder="ten-cong-ty"
-                pattern="[a-zA-Z0-9_-]+"
+                placeholder="e.g., tadev999 or microsoft"
+                pattern="[a-zA-Z0-9\-]+"
                 required
                 autocomplete="off"
                 spellcheck="false"
               />
               <span id="workspace-domain-label" class="workspace-suffix">.huddle60.app</span>
             </div>
-            <button class="btn primary btn-large" type="submit">Vào Không gian làm việc →</button>
+            <button class="btn primary btn-large" type="submit">Open workspace →</button>
           </form>
 
           <div class="workspace-hints small muted">
-            💡 Thử nghiệm nhanh:
-            <a href="/app" id="link-direct-app">vào thẳng Workspace cục bộ</a> hoặc gõ
-            <code>congtyA</code> để trải nghiệm phân tách đa dự án.
+            Haven't selected an account or organization?
+            <a href="/app" id="link-direct-app">Open the app</a> to connect to GitHub first.
           </div>
         </div>
       </section>
 
+      <ol class="landing-pipeline" aria-label="AI-DLC workflow">
+        <li><span>01</span> Idea</li>
+        <li><span>02</span> Testable plan</li>
+        <li><span>03</span> PO + DEV</li>
+        <li><span>04</span> Code + evidence</li>
+      </ol>
+
       <section class="features-grid">
         <div class="card feature-card">
-          <div class="feature-icon">✨</div>
+          <div class="feature-icon">01 / PLAN</div>
           <h3>Idea to Spec in 60s</h3>
           <p>
-            Founder không cần viết PRD dài dòng. Gemini Planner tự động phân rã yêu cầu thành cây
-            Epic/Story/Task với các câu hỏi làm rõ và tiêu chí nghiệm thu
-            <code>Given / When / Then</code> rõ ràng.
+            Founders don't need to write lengthy PRDs. Gemini Planner breaks requests into an
+            Epic/Story/Task hierarchy, with clarifying questions and clear
+            <code>Given / When / Then</code> acceptance criteria.
           </p>
         </div>
 
         <div class="card feature-card">
-          <div class="feature-icon">🎯</div>
-          <h3>Lát cắt dọc kiểm thử được</h3>
+          <div class="feature-icon">02 / DEFINE SCOPE</div>
+          <h3>Testable vertical slices</h3>
           <p>
-            Tạm biệt việc chia vụn task UI riêng, API riêng. Trong kỷ nguyên AI Coding Agent, mỗi
-            tính năng là một lát cắt dọc độc lập, kèm bài test tự động chứng minh tiêu chí đều pass
-            trước khi tạo PR.
+            Move beyond splitting work into separate UI and API tasks. In the age of AI coding
+            agents, each feature is an independent vertical slice with automated tests to verify
+            that every criterion passes before a PR is created.
           </p>
         </div>
 
         <div class="card feature-card">
-          <div class="feature-icon">🛡️</div>
+          <div class="feature-icon">03 / STORE EVIDENCE</div>
           <h3>Zero-Database & Git-Native</h3>
           <p>
-            Mọi kế hoạch, quyết định duyệt bài và lịch sử kiểm toán đều lưu trực tiếp trên chính
-            GitHub của công ty bạn (nhánh bằng chứng <code>huddle60-evidence</code>). Không lo rò rỉ
-            dữ liệu hay bí mật kinh doanh.
+            Code, requirements, issues, plans, and decisions stay in your GitHub repositories, with
+            evidence on the <code>huddle60-evidence</code> branch. Unsaved drafts, credentials, and
+            preferences stay in your browser. AI requests are processed by your configured AI
+            provider.
           </p>
         </div>
 
         <div class="card feature-card">
-          <div class="feature-icon">🤖</div>
-          <h3>Context cho Coding Agent</h3>
+          <div class="feature-icon">04 / HAND OFF</div>
+          <h3>Context for coding agents</h3>
           <p>
-            Xuất context 1-click cho Cursor, Claude Code, Copilot. DEV đưa đúng baseline có chữ ký
-            số vào IDE, đảm bảo AI sinh mã chuẩn 100% theo đúng thỏa thuận nghiệp vụ.
+            Export context to Cursor, Claude Code, or Copilot in one click. Developers bring the
+            signed-off baseline into their IDE so AI-generated code follows the agreed business
+            requirements.
           </p>
         </div>
       </section>
@@ -115,9 +141,9 @@
 
     <footer class="landing-footer small muted">
       <div>huddle60 · The 60-second huddle between PO, DEV and AI on GitHub.</div>
-      <div>Bảo vệ mã nguồn & tuân thủ chuẩn AI-DLC.</div>
+      <div>Your project data, under your control. Built on GitHub and AI-DLC.</div>
     </footer>
 
-    <script src="/landing.js"></script>
+    <script src="/landing.js?v=20261102_7"></script>
   </body>
 </html>

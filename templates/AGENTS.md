@@ -3,6 +3,8 @@
 1. **Trước khi code, lấy baseline đã chốt:**
    - Chạy `npx huddle60 context --issue <số>` (hoặc DEV dán nội dung từ nút **context** trong `huddle60 ui`).
    - Chỉ làm theo nội dung trong đầu ra. Nếu lệnh báo chưa `ready` hoặc có cảnh báo `WARNING`, dừng lại và hỏi DEV/PO.
+   - Nếu repo có `.huddle60/knowledge.md`, đọc trước để nắm kiến trúc, quy ước và lệnh chạy test.
+   - Mục **Impact map** trong context là điểm bắt đầu do AI gợi ý, không phải phạm vi bắt buộc. Kiểm tra lại; file đánh dấu `(mới)` là file chưa tồn tại.
 2. **Triển khai lát cắt dọc có thể kiểm thử (Vertical Testable Slice):**
    - Không chia rẽ tầng công nghệ: Bạn chịu trách nhiệm hiện thực hóa tính năng hoàn chỉnh xuyên suốt từ giao diện (UI), xử lý logic/API cho đến cơ sở dữ liệu.
    - **Bắt buộc viết hoặc cập nhật bài kiểm thử tự động (Unit / Integration / E2E):** Gắn mã AC vào tên test, ví dụ `[AC-01] từ chối mật khẩu sai` hoặc `test('AC-02: redirect to dashboard on success')`.

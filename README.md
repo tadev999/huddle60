@@ -66,11 +66,14 @@ Nhưng trong kỷ nguyên của **AI Coding Agents**:
 ## ⚡ Các Tính Năng Chính
 
 - **Lập kế hoạch đa phương thức (Multimodal Planning):** Nhận cả văn bản, liên kết ngoài (Figma, Miro, Swagger API) và tệp đính kèm (Ảnh mockup PNG/JPG, tài liệu PDF, bảng tính CSV). Gemini Flash tự động trích xuất thông tin để sinh tiêu chí nghiệm thu chuẩn xác.
-- **Thấu hiểu Codebase (Codebase-Aware):** Tự động đọc cấu trúc thư mục repo, `package.json` và `README.md` để sinh kế hoạch phù hợp với công nghệ hiện tại của dự án.
+- **Thấu hiểu Codebase (Codebase-Aware):** AI scout tự chọn và đọc các file source liên quan tới yêu cầu (route, màn hình, model, service, test), cùng bản đồ repo và manifest của mọi hệ sinh thái, để AC khớp với hành vi đang có. File bí mật (`.env`, khóa, secrets) không bao giờ được gửi cho model; tắt bằng `planner.read_source: false`.
+- **Gói tri thức dự án (Knowledge Pack):** `npx huddle60 knowledge` sinh `.huddle60/knowledge.md` (kiến trúc, module, thuật ngữ, quy ước, cách test). Planner và coding agent dùng chung file này.
+- **Bản đồ tác động (Impact Map):** Mỗi Story/Task kèm file dự kiến thay đổi, thành phần tái sử dụng và test liên quan. Đây là gợi ý nằm ngoài baseline: DEV sửa tự do mà không phải xin PO duyệt lại.
+- **Câu trả lời đề xuất (Suggested Answers):** AI đề xuất sẵn câu trả lời kèm căn cứ từ code cho các câu hỏi mở; PO bấm **Dùng đề xuất của AI** thay vì gõ tay, giảm số câu hỏi chặn.
 - **Khóa yêu cầu bằng mật mã (Hash-Lock RFC 8785):** Mỗi Story được chốt thành một baseline có mã băm SHA-256 bất biến. Nếu có ai sửa yêu cầu sau khi PO đã duyệt, GitHub Actions sẽ tự động phát hiện và chặn PR.
 - **Bàn giao ngữ cảnh cho IDE (Context Handover):** DEV chỉ cần 1-click để copy khối Markdown tối ưu dành riêng cho Cursor / Claude Code / Copilot, hướng dẫn AI viết code full-stack kèm test.
 - **Zero-Database & Git-Native:** Không cần dựng máy chủ hay cơ sở dữ liệu riêng. Toàn bộ chính sách (RBAC), lịch sử quyết định và bằng chứng kiểm toán được lưu trữ bất biến trên nhánh Git `huddle60-evidence`.
-- **Giao diện Web siêu tốc (Zero-Build Vanilla UI):** Khởi chạy trong 10ms, hỗ trợ quản lý đa repository, tự động kết nối tài khoản qua GitHub CLI (`gh`).
+- **Giao diện Web dùng chung Local/SaaS:** Engine chạy trong trình duyệt, hỗ trợ nhiều repository, đăng nhập GitHub qua OAuth hoặc PAT và tùy chọn ghi nhớ trên thiết bị cá nhân.
 
 ---
 
@@ -94,8 +97,57 @@ Lệnh này sẽ tạo cấu hình phân quyền `.github/huddle60/policy.yml` v
 npx huddle60 ui
 ```
 
-Trình duyệt sẽ tự động mở tại `http://localhost:4317`.  
-*(Nếu bạn đã cài GitHub CLI `gh`, chỉ cần bấm **"Tự động kết nối từ GitHub CLI"** là xong, không cần tạo PAT thủ công).*
+Trình duyệt sẽ tự động mở ứng dụng tại `http://127.0.0.1:4317/app`.
+Vào **Cài đặt** để đăng nhập GitHub qua OAuth (nếu server đã cấu hình OAuth) hoặc nhập PAT.
+Nhập Gemini key nếu muốn dùng Gemini thay cho GitHub Models.
+
+Local và SaaS dùng cùng browser engine: trình duyệt gọi trực tiếp GitHub/AI;
+server chỉ phục vụ file tĩnh và đổi mã OAuth, không tự đọc token từ `gh`, Keychain,
+biến môi trường hay cấu hình local. Credential cũ không được tự động chuyển sang trình duyệt.
+Các lệnh CLI khác như `init`, `context`, `knowledge` vẫn dùng credential của môi trường CLI.
+
+**Ghi nhớ trên thiết bị này** mặc định tắt. Khi bật trong Cài đặt, GitHub token và Gemini key
+được lưu vào `localStorage`, dùng lại ở tab mới và lần truy cập sau **cùng origin**
+(cùng giao thức, hostname và port). Các subdomain, `localhost` và `127.0.0.1` không chia sẻ đăng nhập.
+Bỏ chọn sẽ xóa bản lưu lâu dài nhưng giữ credential trong tab hiện tại.
+Đăng xuất xóa cả token và key, ngắt kết nối các tab cùng origin; thay đổi credential ở tab khác
+sẽ làm mới phiên ứng dụng và bỏ bản nháp kế hoạch của tab đó.
+Chỉ bật trên thiết bị cá nhân: JavaScript cùng origin có thể đọc credential; đây không phải
+kho bí mật chống XSS. Token/key hết hạn hoặc bị thu hồi vẫn cần kết nối lại.
+
+OAuth cho localhost cần `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` trên server và callback
+đã đăng ký đúng địa chỉ, ví dụ `http://127.0.0.1:4317/api/auth/github/callback`.
+Nếu không cấu hình OAuth, dùng PAT trong giao diện.
+
+**Giao diện Sáng / Tối:** chọn ở thanh trên cùng của landing page hoặc ứng dụng.
+Mặc định theo giao diện hệ thống; lựa chọn được ghi nhớ trên trình duyệt và đồng bộ giữa
+các tab cùng origin. Giao diện sáng phù hợp cho PO đọc và duyệt yêu cầu trong ngày.
+
+**Settings** chia thành tài khoản GitHub, AI Planner và đội ngũ & phân quyền.
+Mở phần cấu hình Gemini nếu muốn dùng key riêng rồi lưu cấu hình AI.
+Nếu máy chủ chưa bật OAuth, giao diện hiển thị trực tiếp phần kết nối bằng PAT.
+
+Giao diện web hiện dùng tiếng Anh ở cả Local và SaaS (landing page, điều hướng,
+cài đặt, hộp thoại và thông báo). Nội dung yêu cầu, Issues và bản nháp do người dùng
+hoặc AI cung cấp giữ nguyên ngôn ngữ của chúng; không tự dịch dữ liệu dự án.
+
+**Open app** trên landing page mở `/app` mà không khôi phục workspace từ cookie cũ.
+Chọn **Choose workspace** (hoặc tên `@owner` ở thanh trên) để đổi GitHub account /
+Organization ngay trong app. Việc đổi workspace giữ nguyên origin và thông tin kết nối
+trong trình duyệt; repository đã chọn được ghi nhớ riêng theo workspace. App sẽ tải lại,
+vì vậy hãy lưu các thay đổi trước khi chuyển.
+
+Khi đổi repository, bảng **Work** xóa dữ liệu repo trước và tải lại Issues của repo mới.
+Nếu GitHub từ chối truy cập hoặc giới hạn lượt gọi, Work hiển thị lỗi thay vì giữ dữ liệu cũ;
+dùng **Refresh** để thử lại sau khi xử lý kết nối.
+
+### 3. (Khuyên dùng) Sinh gói tri thức dự án
+
+```bash
+npx huddle60 knowledge
+```
+
+Lệnh ghi `.huddle60/knowledge.md` từ nhánh mặc định. Review nội dung rồi commit qua PR; từ đó planner và coding agent hiểu kiến trúc và quy ước của dự án.
 
 ---
 

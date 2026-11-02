@@ -1,7 +1,9 @@
 import { baselinePath, type BaselineSnapshot } from "../core/baseline.js";
 import { AiDlcError } from "../core/errors.js";
+import { parseIssueForm } from "../core/issue-form.js";
 import type { Policy } from "../core/policy.js";
 import { renderPrBlock } from "../core/pr-block.js";
+import { KNOWLEDGE_PATH, SECTIONS } from "../core/vocabulary.js";
 import type { EvidenceStore, GitHubPort } from "../ports.js";
 import type { WorkflowService } from "./service.js";
 
@@ -42,6 +44,8 @@ export async function renderAgentContext(
     const sections = Object.entries(snapshot.requirements.sections)
       .filter(([, value]) => value.length > 0)
       .map(([heading, value]) => `### ${heading}\n\n${value}`);
+    const impact = parseIssueForm(issue.body).get(SECTIONS.impact);
+    const hasKnowledge = (await github.readFile(KNOWLEDGE_PATH).catch(() => null)) !== null;
     return [
       `# huddle60 context for #${issueNumber}`,
       "",
@@ -57,10 +61,25 @@ export async function renderAgentContext(
       "- Implement this as a complete, vertical testable slice across all required layers (UI, API, Data).",
       "- You MUST write or update automated tests verifying that all acceptance criteria below pass before submitting the PR.",
       "- Implement only what this baseline describes. Do not run /huddle60 approve, ready or accept.",
+      ...(hasKnowledge
+        ? [
+            `- Read \`${KNOWLEDGE_PATH}\` for architecture, conventions and test commands before coding.`,
+          ]
+        : []),
       "",
       `## ${snapshot.requirements.title}`,
       "",
       sections.join("\n\n"),
+      ...(impact
+        ? [
+            "",
+            "## Impact map (advisory, not part of the baseline)",
+            "",
+            "Starting points suggested from the source code. Verify them; they do not limit the scope.",
+            "",
+            impact.replace(/^---[\s\S]*$/mu, "").trim(),
+          ]
+        : []),
       "",
       "## PR body block",
       "",

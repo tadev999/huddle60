@@ -1,5 +1,12 @@
 # Tôn chỉ Cốt lõi & Kiến trúc Chịu tải Cao (High-Concurrency Architecture)
 
+> **Cập nhật runtime:** Local và SaaS hiện dùng cùng browser engine, server chỉ phục vụ file tĩnh
+> và OAuth exchange. Token/key mặc định ở `sessionStorage`, hoặc `localStorage` khi bật
+> **Ghi nhớ trên thiết bị này** (chỉ cùng origin). UI không đọc `gh`, Keychain hay config local.
+> Xem mục 7 trong [technical-implementation.md](technical-implementation.md).
+> Các sơ đồ server cache, workspace token delegation và con số tải/chi phí phía dưới là
+> đề xuất kiến trúc trước đây, **không mô tả runtime hiện tại hay kết quả load-test**.
+
 Tài liệu này tổng hợp **toàn bộ triết lý thiết kế (Core Principles)** và **giải pháp kiến trúc kỹ thuật (Engineering Architecture)** của Huddle60 (AI-DLC) để vận hành ổn định, phục vụ từ nhóm nhỏ cho đến **5.000 người dùng đồng thời liên tục trong 5 giờ (bao gồm cả khách vãng lai)** với chi phí tối ưu (0đ – 5$/tháng).
 
 ---
@@ -25,11 +32,11 @@ Tài liệu này tổng hợp **toàn bộ triết lý thiết kế (Core Princi
 * Khách hàng sở hữu và kiểm soát toàn bộ dữ liệu của họ. Không có nguy cơ rò rỉ dữ liệu qua bên thứ ba (Zero Vendor Lock-in).
 
 ### 2. Kiến trúc SaaS Không Trạng Thái (Stateless / Zero-Storage SaaS)
-* **Khi chạy Local trên máy cá nhân (`npx huddle60 ui`):** Cấu hình được lưu tại `~/.config/huddle60/` trên máy riêng của người dùng (tương tự `~/.gitconfig` hay `~/.aws/credentials`).
-* **Khi triển khai SaaS công cộng (`*.huddle60.app`):** 
-  * Server **hoàn toàn KHÔNG ghi bất kỳ token nào của người dùng xuống ổ cứng**.
-  * Phiên đăng nhập được mã hóa 2 chiều (AES-256) và lưu trong **Session Cookie (HttpOnly, Secure, SameSite=Lax)** tại trình duyệt của người dùng.
-  * Khi người dùng đóng trình duyệt hoặc đăng xuất: Phiên làm việc tự hủy, không để lại bất kỳ dấu vết nào trên máy chủ.
+* **Local (`npx huddle60 ui`) và SaaS công cộng (`*.huddle60.app`) dùng chung cơ chế:**
+  * Ứng dụng **chạy trong trình duyệt của từng người** (`ui/engine.js`). Trình duyệt gọi thẳng GitHub và Gemini bằng token và key của chính người dùng.
+  * Server **chỉ phục vụ file tĩnh và đổi OAuth code lấy token**. Nó không giữ session, không lưu token, không gọi GitHub hay Gemini thay ai.
+  * Token GitHub và Gemini key mặc định ở `sessionStorage`; opt-in ghi nhớ dùng `localStorage`. Đăng xuất xóa cả hai và ngắt các tab cùng origin.
+  * Chi tiết: mục 7.5 trong [technical-implementation.md](technical-implementation.md).
 
 ### 3. Khóa Bảo vệ Yêu cầu bằng Mã băm (Hash-Lock RFC 8785)
 * Mỗi Story sau khi được PO duyệt sẽ được chụp snapshot và tính mã băm chuẩn hóa **SHA-256** theo chuẩn **RFC 8785**.
@@ -280,5 +287,4 @@ flowchart TD
     - Bắt buộc tối thiểu 1 PO và 1 Maintainer (ngăn chặn tình trạng repo bị mồ côi).
     - Cấm tài khoản bot giữ vai trò trong policy.
     - Chỉ Maintainer hoặc Repo Admin mới có quyền lưu thay đổi. Người dùng khác chỉ xem ở chế độ Read-only.
-
 

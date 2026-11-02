@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256Hex } from "./sha256.js";
 
 export const CANONICAL_VERSION = 1;
 
@@ -57,7 +57,7 @@ function serialize(value: JsonValue): string {
 }
 
 export function sha256(text: string): string {
-  return `sha256:${createHash("sha256").update(text, "utf8").digest("hex")}`;
+  return `sha256:${sha256Hex(text)}`;
 }
 
 /** Hash of a payload, ignoring its own `contentHash` field. */

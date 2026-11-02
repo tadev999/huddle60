@@ -51,8 +51,17 @@ export const PolicySchema = z
       .object({
         max_nodes: z.number().int().min(1).max(200).default(60),
         plan_ttl_days: z.number().int().min(1).max(90).default(30),
+        read_source: z.boolean().default(true),
+        max_source_files: z.number().int().min(0).max(40).default(12),
+        source_deny: z.array(z.string().min(1)).default([]),
       })
-      .default({ max_nodes: 60, plan_ttl_days: 30 }),
+      .default({
+        max_nodes: 60,
+        plan_ttl_days: 30,
+        read_source: true,
+        max_source_files: 12,
+        source_deny: [],
+      }),
   })
   .superRefine((policy, ctx) => {
     const bots = [...policy.roles.po, ...policy.roles.dev, ...policy.roles.maintainer].filter(

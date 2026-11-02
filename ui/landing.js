@@ -9,8 +9,7 @@
   const isLocal = host.includes("localhost") || host.includes("127.0.0.1");
 
   if (isLocal) {
-    const port = window.location.port ? `:${window.location.port}` : "";
-    suffixLabel.textContent = ` (cục bộ)`;
+    suffixLabel.hidden = true;
     const prefixEl = document.querySelector(".workspace-prefix");
     if (prefixEl) prefixEl.textContent = "/";
   } else {
@@ -37,7 +36,7 @@
     const slug = slugInput.value
       .trim()
       .toLowerCase()
-      .replace(/[^a-z0-9_-]/g, "");
+      .replace(/[^a-z0-9-]/g, "");
     if (!slug) return;
 
     let targetUrl;

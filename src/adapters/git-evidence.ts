@@ -1,4 +1,4 @@
-import { setTimeout as delay } from "node:timers/promises";
+import { base64ToUtf8, delay } from "../core/encoding.js";
 import { canonicalJson } from "../core/canonical.js";
 import { AiDlcError } from "../core/errors.js";
 import type { EvidenceStore } from "../ports.js";
@@ -27,7 +27,7 @@ export class GitBranchEvidenceStore implements EvidenceStore {
     try {
       const { data } = await this.octokit.rest.repos.getContent({ ...this.base, path, ref });
       if (Array.isArray(data) || data.type !== "file" || !("content" in data)) return null;
-      return JSON.parse(Buffer.from(data.content, "base64").toString("utf8")) as T;
+      return JSON.parse(base64ToUtf8(data.content)) as T;
     } catch (error) {
       if (isStatus(error, 404)) return null;
       throw error;

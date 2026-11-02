@@ -1,4 +1,4 @@
-import { setTimeout as delay } from "node:timers/promises";
+import { delay } from "../core/encoding.js";
 import { AiDlcError } from "../core/errors.js";
 import type { ModelPort, ModelUsage } from "../ports.js";
 
@@ -62,13 +62,13 @@ export class GitHubModels implements ModelPort {
           if (response.status === 429) {
             throw new AiDlcError(
               "E_MODEL",
-              "GitHub Models đã đạt giới hạn lượt gọi (Rate limit). Vui lòng thử lại sau hoặc nhập Gemini API Key trong Cài đặt để có 1.500 lượt/ngày.",
+              "GitHub Models: Rate limit reached. Try again later or configure a Gemini API key in Settings.",
             );
           }
           if (response.status === 401 || response.status === 403) {
             throw new AiDlcError(
               "E_MODEL",
-              `GitHub Token không có quyền truy cập GitHub Models (HTTP ${response.status}). Vui lòng kiểm tra quyền token hoặc cấu hình Gemini API Key.`,
+              `Your GitHub token cannot access GitHub Models (HTTP ${response.status}). Check token permissions or configure a Gemini API key.`,
             );
           }
           const err = new Error(`HTTP ${response.status}: ${errorBody}`);
@@ -83,7 +83,7 @@ export class GitHubModels implements ModelPort {
 
         let text = data.choices?.[0]?.message?.content;
         if (!text) {
-          throw new AiDlcError("E_MODEL", "GitHub Models trả về nội dung rỗng.");
+          throw new AiDlcError("E_MODEL", "GitHub Models returned an empty response.");
         }
 
         // Clean up markdown fences if present
@@ -113,14 +113,10 @@ export class GitHubModels implements ModelPort {
         const retryable = timedOut || (status !== undefined && RETRYABLE.has(status));
 
         if (!retryable || attempt >= this.maxRetries) {
-          const reason = timedOut
-            ? "quá thời gian chờ"
-            : status
-              ? `lỗi HTTP ${status}`
-              : "thất bại";
+          const reason = timedOut ? "timed out" : status ? `failed with HTTP ${status}` : "failed";
           throw new AiDlcError(
             "E_MODEL",
-            `Kết nối GitHub Models ${reason}. Thử lại sau hoặc chuyển sang Gemini API.`,
+            `GitHub Models connection ${reason}. Try again later or switch to Gemini.`,
             { cause: error },
           );
         }

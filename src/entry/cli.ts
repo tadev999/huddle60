@@ -23,6 +23,9 @@ import {
 } from "../core/plan.js";
 import { POLICY_PATH, LEGACY_POLICY_PATH, parsePolicy } from "../core/policy.js";
 import { renderPlanComment } from "../core/render.js";
+import { KNOWLEDGE_PATH } from "../core/vocabulary.js";
+import { DEFAULT_EXPLORE_LIMITS } from "../planner/explorer.js";
+import { generateKnowledge } from "../planner/knowledge.js";
 import {
   PLANNER_SYSTEM_INSTRUCTION,
   PROMPT_VERSION,
@@ -41,13 +44,15 @@ Commands:
   init-evidence                   Create only the protected evidence branch
   validate-policy [file]          Validate ${POLICY_PATH} (default path) offline
   plan-preview "<request>"        Ask Gemini for a plan locally; nothing is written to GitHub
+  knowledge [--stdout]            Generate ${KNOWLEDGE_PATH} from the default branch (review, then commit via PR)
 
 Options:
-  --repo owner/name               Repository (default: GITHUB_REPOSITORY or git remote origin)
+  --repo owner/name               Repository (CLI default: GITHUB_REPOSITORY or git remote origin; UI: browser selection)
 
 Environment:
-  GH_TOKEN / GITHUB_TOKEN          GitHub token (default: \`gh auth token\`)
-  GEMINI_API_KEY, AI_DLC_MODEL     Gemini settings for planning (macOS: Keychain item "huddle60-gemini")
+  GH_TOKEN / GITHUB_TOKEN          CLI GitHub token (default: \`gh auth token\`; not used by ui)
+  GEMINI_API_KEY, AI_DLC_MODEL     CLI Gemini settings (not used by ui)
+  GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET   Optional OAuth for ui; otherwise enter a PAT in Settings
 `;
 
 function detectRepo(explicit: string | undefined): [string, string] {
@@ -261,17 +266,47 @@ async function validatePolicy(file: string | undefined): Promise<string> {
   return `Policy is valid: ${policy.roles.po.length} PO, ${policy.roles.dev.length} DEV, ${policy.roles.maintainer.length} maintainer.`;
 }
 
-async function planPreview(request: string | undefined): Promise<string> {
-  if (!request)
-    throw new Error('Pass the request text, e.g. huddle60 plan-preview "Login with Google".');
+function geminiFromEnv(): GeminiModel {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("Set GEMINI_API_KEY to call Gemini.");
-  const model = new GeminiModel({
+  return new GeminiModel({
     apiKey,
     model: process.env.AI_DLC_MODEL ?? "gemini-3.8-flash",
     timeoutMs: 120_000,
     maxRetries: 1,
   });
+}
+
+async function knowledge(repoArg: string | undefined, toStdout: boolean): Promise<string> {
+  const [owner, repo] = detectRepo(repoArg);
+  const github = await connectRepository(octokitFromToken(token()), owner, repo);
+  const branch = await github.getDefaultBranch();
+  const policySource =
+    (await github.readFile(POLICY_PATH, branch)) ??
+    (await github.readFile(LEGACY_POLICY_PATH, branch));
+  const planner = policySource ? parsePolicy(policySource).planner : null;
+  const { markdown, insight } = await generateKnowledge(
+    { github, model: geminiFromEnv(), logger: silentLogger, now: systemClock.now() },
+    {
+      ...DEFAULT_EXPLORE_LIMITS,
+      maxFiles: Math.max(planner?.max_source_files ?? 0, 20),
+      deny: planner?.source_deny ?? [],
+    },
+  );
+  if (toStdout) return markdown;
+  const target = join(process.cwd(), KNOWLEDGE_PATH);
+  await mkdir(dirname(target), { recursive: true });
+  await writeFile(target, markdown, "utf8");
+  return [
+    `✓ Wrote ${KNOWLEDGE_PATH} from ${owner}/${repo}@${branch} (${insight.files.length} source files read).`,
+    "Review it, then commit through a PR so the planner and coding agents can use it.",
+  ].join("\n");
+}
+
+async function planPreview(request: string | undefined): Promise<string> {
+  if (!request)
+    throw new Error('Pass the request text, e.g. huddle60 plan-preview "Login with Google".');
+  const model = geminiFromEnv();
   const result = await model.generateJson({
     system: PLANNER_SYSTEM_INSTRUCTION,
     user: buildPlannerPrompt({ title: request.slice(0, 80), request, clarifications: [] }),
@@ -312,6 +347,7 @@ async function main(): Promise<void> {
       repo: { type: "string" },
       issue: { type: "string" },
       draft: { type: "boolean", default: false },
+      stdout: { type: "boolean", default: false },
       host: { type: "string" },
       port: { type: "string" },
       "no-open": { type: "boolean", default: false },
@@ -342,6 +378,9 @@ async function main(): Promise<void> {
       break;
     case "plan-preview":
       output = await planPreview(argument);
+      break;
+    case "knowledge":
+      output = await knowledge(values.repo, values.stdout ?? false);
       break;
     default:
       throw new Error(`Unknown command "${command}".\n\n${USAGE}`);

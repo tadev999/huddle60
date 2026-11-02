@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { MemoryPlanStore } from "../adapters/memory.js";
 import { REQUIRED_ROLE, type DecisionKind } from "../core/decision.js";
 import { AiDlcError, isAiDlcError } from "../core/errors.js";
@@ -8,11 +7,12 @@ import {
   buildPlanId,
   computePlanHash,
   computeRequestDigest,
+  suggestedAnswers,
   type ModelPlan,
   type PlanRecord,
 } from "../core/plan.js";
 import { hasRole, type LaneName, type Policy, type Role } from "../core/policy.js";
-import { bulletList, marker, renderTree, sanitize } from "../core/render.js";
+import { bulletList, marker, questionLine, renderTree, sanitize } from "../core/render.js";
 import {
   KIND_LABEL,
   LABELS,
@@ -21,6 +21,11 @@ import {
   type WorkItemKind,
 } from "../core/vocabulary.js";
 import { IssueTreeCreator } from "../planner/creator.js";
+import {
+  DEFAULT_EXPLORE_LIMITS,
+  exploreRepository,
+  type RepoInsight,
+} from "../planner/explorer.js";
 import { generatePlan } from "../planner/generate.js";
 import { PROMPT_VERSION, buildPlannerPrompt } from "../planner/prompt.js";
 import { canonicalJson } from "../core/canonical.js";
@@ -45,6 +50,8 @@ export interface LocalAppDeps {
   model: ModelPort | null;
   clock: Clock;
   logger: Logger;
+  /** Read-only visitor without a GitHub sign-in: no viewer, no roles. */
+  guest?: boolean;
 }
 
 export type Stage = "awaiting-approval" | "awaiting-ready" | "in-progress";
@@ -92,6 +99,8 @@ interface Draft {
   figmaUrl?: string;
   attachments?: AttachmentPart[];
   images?: Array<{ mimeType: string; dataBase64: string }>;
+  /** Read once per draft and reused by refinements. */
+  insight?: RepoInsight | null;
 }
 
 const LANES: readonly LaneName[] = ["fast", "standard", "strict"];
@@ -110,6 +119,29 @@ export const LABEL_COLORS: Record<string, { color: string; description: string }
   [LABELS.task]: { color: "0052cc", description: "Technical task" },
 };
 
+const NEW_PATH_SUFFIX = " (mới)";
+
+/** Lets DEV tell real paths from ones the model expects to create (or hallucinated). */
+export function markNewImpactPaths(plan: ModelPlan, existing: ReadonlySet<string>): ModelPlan {
+  const mark = (path: string) =>
+    existing.has(path) || path.endsWith(NEW_PATH_SUFFIX) ? path : `${path}${NEW_PATH_SUFFIX}`;
+  return {
+    ...plan,
+    nodes: plan.nodes.map((node) =>
+      node.impact
+        ? {
+            ...node,
+            impact: {
+              ...node.impact,
+              files: node.impact.files.map(mark),
+              tests: node.impact.tests.map(mark),
+            },
+          }
+        : node,
+    ),
+  };
+}
+
 /** Backend of `huddle60 ui`. Decisions are posted as `/huddle60` comments so GitHub Actions validates them. */
 function formatTechnicalRefs(
   links?: string[],
@@ -118,7 +150,7 @@ function formatTechnicalRefs(
   images?: Array<{ mimeType: string; dataBase64: string }>,
 ): string {
   const allLinks = [...(links ?? []), ...(figmaUrl ? [figmaUrl] : [])].filter(Boolean);
-  const allAttachments = [...(attachments ?? []), ...(images ?? [])];
+  const allAttachments: AttachmentPart[] = [...(attachments ?? []), ...(images ?? [])];
   const parts: string[] = [];
 
   if (allLinks.length > 0) {
@@ -151,6 +183,7 @@ function formatTechnicalRefs(
 export class LocalApp {
   readonly workflow: WorkflowService;
   private readonly plans = new MemoryPlanStore();
+  private readonly instanceId = crypto.randomUUID();
   private readonly drafts = new Map<string, Draft>();
   private viewerCache: Actor | null = null;
   private cachedItems: WorkItem[] | null = null;
@@ -201,12 +234,12 @@ export class LocalApp {
 
   async session() {
     const policy = await this.workflow.policy();
-    const viewer = await this.viewer();
+    const viewer = this.deps.guest ? null : await this.viewer();
     return {
       repo: { ...this.deps.github.repo, url: this.repoUrl },
       defaultBranch: await this.deps.github.getDefaultBranch(),
-      viewer: { id: viewer.id, login: viewer.login },
-      roles: await this.rolesOf(policy),
+      viewer: viewer ? { id: viewer.id, login: viewer.login } : null,
+      roles: viewer ? await this.rolesOf(policy) : [],
       planner: this.deps.model ? { model: this.deps.model.modelId } : null,
       lanes: Object.fromEntries(
         LANES.map((lane) => [
@@ -232,11 +265,14 @@ export class LocalApp {
       throw new AiDlcError("E_FORM", "Describe the need in at least one sentence.");
     if (request.length > 20_000) throw new AiDlcError("E_FORM", "The request is too long.");
     const title = (input.title?.trim() || (request.split("\n")[0] ?? "")).slice(0, 120).trim();
-    const links = [...(input.links ?? []), ...(input.figmaUrl ? [input.figmaUrl] : [])].filter(Boolean);
+    const links = [...(input.links ?? []), ...(input.figmaUrl ? [input.figmaUrl] : [])].filter(
+      Boolean,
+    );
     const attachments = [...(input.attachments ?? []), ...(input.images ?? [])];
-    const plan = await this.generate(title, request, [], null, links, attachments);
+    const insight = await this.explore(title, request);
+    const plan = await this.generate(title, request, [], null, links, attachments, insight);
     const draft: Draft = {
-      id: randomUUID(),
+      id: crypto.randomUUID(),
       title,
       request,
       clarifications: [],
@@ -247,6 +283,7 @@ export class LocalApp {
       figmaUrl: input.figmaUrl,
       attachments,
       images: input.images,
+      insight,
     };
     this.drafts.set(draft.id, draft);
     if (this.drafts.size > MAX_DRAFTS) {
@@ -258,11 +295,28 @@ export class LocalApp {
 
   async refinePlan(draftId: string, clarification: string): Promise<DraftView> {
     const draft = this.draft(draftId);
-    if (draft.record)
-      throw new AiDlcError("E_CONFLICT", "Issues were already created for this plan.");
     const text = clarification.trim();
     if (text.length === 0) throw new AiDlcError("E_FORM", "Write an answer or a change request.");
     if (text.length > 5_000) throw new AiDlcError("E_FORM", "The answer is too long.");
+    return this.applyClarification(draft, text);
+  }
+
+  /** One click instead of typing: the PO accepts every answer the AI inferred from the repository. */
+  async acceptSuggestions(draftId: string): Promise<DraftView> {
+    const draft = this.draft(draftId);
+    const suggestions = suggestedAnswers(draft.plan);
+    if (suggestions.length === 0)
+      throw new AiDlcError("E_FORM", "This plan has no suggested answers to accept.");
+    const text = [
+      "PO chấp nhận các đề xuất của AI cho các câu hỏi sau:",
+      ...suggestions.map((question) => `- ${question.text} → ${question.suggestedAnswer}`),
+    ].join("\n");
+    return this.applyClarification(draft, text);
+  }
+
+  private async applyClarification(draft: Draft, text: string): Promise<DraftView> {
+    if (draft.record)
+      throw new AiDlcError("E_CONFLICT", "Issues were already created for this plan.");
     const clarifications = [...draft.clarifications, text];
     draft.plan = await this.generate(
       draft.title,
@@ -271,6 +325,7 @@ export class LocalApp {
       draft.plan,
       draft.links,
       draft.attachments,
+      draft.insight ?? null,
     );
     draft.clarifications = clarifications;
     return this.view(draft);
@@ -291,7 +346,12 @@ export class LocalApp {
     const { github, clock, logger } = this.deps;
     if (!draft.record) {
       let body = `### ${SECTIONS.request}\n\n${sanitize(draft.request)}\n`;
-      const techRefs = formatTechnicalRefs(draft.links, draft.figmaUrl, draft.attachments, draft.images);
+      const techRefs = formatTechnicalRefs(
+        draft.links,
+        draft.figmaUrl,
+        draft.attachments,
+        draft.images,
+      );
       if (techRefs) {
         body += `\n### ${SECTIONS.technicalRefs}\n\n${techRefs}\n`;
       }
@@ -313,7 +373,7 @@ export class LocalApp {
       store: this.plans,
       clock,
       logger,
-      leaseOwner: `local-${process.pid}`,
+      leaseOwner: `local-${this.instanceId}`,
     });
     const ledger = await creator.create(draft.record, policy);
     draft.created = {
@@ -342,6 +402,7 @@ export class LocalApp {
     previous: ModelPlan | null,
     links?: string[],
     attachments?: AttachmentPart[],
+    insight: RepoInsight | null = null,
   ): Promise<ModelPlan> {
     const { model, logger } = this.deps;
     if (!model) {
@@ -352,7 +413,7 @@ export class LocalApp {
     }
     const policy = await this.workflow.policy();
     let codebaseContext: string | undefined;
-    if (this.deps.github.getCodebaseContext) {
+    if (!insight && this.deps.github.getCodebaseContext) {
       try {
         codebaseContext = await this.deps.github.getCodebaseContext();
       } catch {
@@ -364,11 +425,43 @@ export class LocalApp {
       request,
       clarifications,
       codebaseContext,
+      ...(insight ? { repository: insight } : {}),
       links,
       hasAttachments: Boolean(attachments && attachments.length > 0),
       ...(previous ? { previousPlanJson: canonicalJson(previous) } : {}),
     });
-    return (await generatePlan(model, logger, prompt, policy.planner.max_nodes, attachments)).plan;
+    const { plan } = await generatePlan(
+      model,
+      logger,
+      prompt,
+      policy.planner.max_nodes,
+      attachments,
+    );
+    return insight ? markNewImpactPaths(plan, insight.paths) : plan;
+  }
+
+  /** Never blocks planning: any failure falls back to the shallow codebase context. */
+  private async explore(title: string, request: string): Promise<RepoInsight | null> {
+    const { github, model, logger } = this.deps;
+    if (!model) return null;
+    try {
+      const { planner } = await this.workflow.policy();
+      if (!planner.read_source) return null;
+      return await exploreRepository(
+        { github, model, logger },
+        { title, request },
+        {
+          ...DEFAULT_EXPLORE_LIMITS,
+          maxFiles: planner.max_source_files,
+          deny: planner.source_deny,
+        },
+      );
+    } catch (error) {
+      logger.warn("repository exploration failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
   }
 
   private record(draft: Draft, issue: IssueData, policy: Policy, requestedBy: number): PlanRecord {
@@ -376,7 +469,12 @@ export class LocalApp {
     const digest = computeRequestDigest(issue.title, issue.body);
     const planHash = computePlanHash(digest, draft.plan);
     const now = clock.now();
-    const technicalRefs = formatTechnicalRefs(draft.links, draft.figmaUrl, draft.attachments, draft.images);
+    const technicalRefs = formatTechnicalRefs(
+      draft.links,
+      draft.figmaUrl,
+      draft.attachments,
+      draft.images,
+    );
     return {
       schemaVersion: PLAN_SCHEMA_VERSION,
       planId: buildPlanId(issue.number, 1, planHash),
@@ -418,7 +516,7 @@ export class LocalApp {
       "",
       "### Câu hỏi không chặn",
       "",
-      bulletList(plan.openQuestions.filter((q) => !q.blocking).map((q) => q.text)),
+      bulletList(plan.openQuestions.filter((q) => !q.blocking).map(questionLine)),
       "",
       "### Làm rõ của PO",
       "",
@@ -615,8 +713,9 @@ export class LocalApp {
     canEdit: boolean;
   }> {
     const policy = await this.workflow.policy();
-    const viewer = await this.viewer();
-    const canEdit = hasRole(policy, viewer.id, "dev") || hasRole(policy, viewer.id, "po");
+    const viewer = this.deps.guest ? null : await this.viewer();
+    const canEdit =
+      viewer !== null && (hasRole(policy, viewer.id, "dev") || hasRole(policy, viewer.id, "po"));
     const issue = await this.deps.github.getIssue(issueNumber);
     return {
       number: issue.number,

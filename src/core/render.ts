@@ -1,5 +1,5 @@
-import type { ModelPlan, PlanNode, PlanRecord } from "./plan.js";
-import { blockingQuestions, creationOrder } from "./plan.js";
+import type { ModelPlan, PlanImpact, PlanNode, PlanQuestion, PlanRecord } from "./plan.js";
+import { creationOrder } from "./plan.js";
 import { SECTIONS } from "./vocabulary.js";
 
 /**
@@ -35,6 +35,33 @@ export function bulletList(items: readonly string[], empty = "_(không có)_"): 
 
 export function issueTitle(node: PlanNode): string {
   return `[${KIND_TITLE[node.kind]}] ${sanitize(node.title).replace(/\s+/gu, " ")}`;
+}
+
+/** Question text with the AI's suggested default answer, unsanitized. */
+export function questionLine(question: PlanQuestion): string {
+  if (!question.suggestedAnswer) return question.text;
+  const evidence = question.evidence ? ` (căn cứ: ${question.evidence})` : "";
+  return `${question.text} — Đề xuất: ${question.suggestedAnswer}${evidence}`;
+}
+
+const CONFIDENCE = { low: "thấp", medium: "trung bình", high: "cao" } as const;
+
+function codeList(items: readonly string[]): string {
+  return items.map((item) => `- \`${sanitize(item).replace(/`/gu, "")}\``).join("\n");
+}
+
+export function renderImpact(impact: PlanImpact): string {
+  const parts = [`- Độ tin cậy: ${CONFIDENCE[impact.confidence]}`];
+  if (impact.files.length > 0)
+    parts.push("", "**File dự kiến thay đổi**", "", codeList(impact.files));
+  if (impact.reuse.length > 0)
+    parts.push("", "**Có thể tái sử dụng**", "", bulletList(impact.reuse));
+  if (impact.tests.length > 0) parts.push("", "**Test liên quan**", "", codeList(impact.tests));
+  parts.push(
+    "",
+    "_Gợi ý của AI từ source code. Không thuộc baseline, không ràng buộc; DEV có thể sửa tự do._",
+  );
+  return parts.join("\n");
 }
 
 /** Body of an Issue created from a plan. Headings match the Issue forms so the same parser applies. */
@@ -75,6 +102,7 @@ export function renderNodeBody(
   }
   sections.push([SECTIONS.technicalRefs, record.technicalRefs ?? ""]);
   sections.push([SECTIONS.risks, bulletList(node.riskNotes, "")]);
+  if (node.impact) sections.push([SECTIONS.impact, renderImpact(node.impact)]);
 
   const rendered = sections
     .map(([heading, value]) => `### ${heading}\n\n${value || "_No response_"}`)
@@ -117,10 +145,8 @@ export function renderTree(plan: ModelPlan): string {
 
 export function renderPlanComment(record: PlanRecord): string {
   const { plan } = record;
-  const blocking = blockingQuestions(plan);
-  const nonBlocking = plan.openQuestions
-    .filter((question) => !question.blocking)
-    .map((question) => question.text);
+  const blocking = plan.openQuestions.filter((question) => question.blocking).map(questionLine);
+  const nonBlocking = plan.openQuestions.filter((question) => !question.blocking).map(questionLine);
   const counts = (["epic", "story", "task"] as const)
     .map((kind) => [kind, plan.nodes.filter((node) => node.kind === kind).length] as const)
     .filter(([, count]) => count > 0)

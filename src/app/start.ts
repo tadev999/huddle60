@@ -1,11 +1,9 @@
 import { execFile, execFileSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { createJsonLogger } from "../adapters/memory.js";
-import { readConfig, readConfigSync, writeConfig } from "../core/config.js";
+import { readConfigSync } from "../core/config.js";
 import { AiDlcError } from "../core/errors.js";
-import { LocalAppManager } from "./manager.js";
 import { createAppHandler } from "./server.js";
 
 /** GitHub token of the person running the app: env first, then config.json, then the GitHub CLI. */
@@ -67,47 +65,28 @@ export interface StartOptions {
 
 export async function startLocalApp(options: StartOptions): Promise<void> {
   const logger = createJsonLogger({ component: "huddle60-ui" });
-  const explicitRepo =
-    options.owner && options.repo ? `${options.owner}/${options.repo}` : undefined;
-  const manager = new LocalAppManager({ explicitRepo, logger });
-  await manager.initialize();
-
-  const fileConfig = await readConfig();
-  let token = process.env.HUDDLE60_SESSION_TOKEN || fileConfig.sessionToken;
-  if (!token) {
-    token = randomBytes(32).toString("base64url");
-    await writeConfig({ sessionToken: token });
-  }
   const host = options.host ?? process.env.HOST ?? "127.0.0.1";
   const uiDir = options.uiDir ?? fileURLToPath(new URL("../ui/", import.meta.url));
-  const server = createServer(
-    createAppHandler({ manager, token, host, port: options.port, uiDir, logger }),
-  );
+
+  const explicitRepo =
+    options.owner && options.repo ? `${options.owner}/${options.repo}` : undefined;
+  const server = createServer(createAppHandler({ host, port: options.port, uiDir, logger }));
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(options.port, host, resolve);
   });
-  const settings = await manager.getSettings();
   const displayHost = host === "0.0.0.0" ? "127.0.0.1" : host;
   const url = explicitRepo
-    ? `http://${displayHost}:${options.port}/${explicitRepo}#token=${token}`
-    : `http://${displayHost}:${options.port}/#token=${token}`;
-  const title =
-    settings.status === "ready"
-      ? `huddle60 · AI-DLC for ${settings.repo} (signed in as @${settings.githubUser?.login})`
-      : `huddle60 · Cần cấu hình (vui lòng mở giao diện để cài đặt)`;
-  const plannerStatus = settings.hasGeminiKey
-    ? `Planner: Gemini ready (${settings.geminiModel})`
-    : "Planner: disabled (chưa có GEMINI_API_KEY)";
+    ? `http://${displayHost}:${options.port}/${explicitRepo}`
+    : `http://${displayHost}:${options.port}/app`;
 
   process.stdout.write(
     [
-      title,
-      plannerStatus,
+      "huddle60 · browser engine (local and SaaS share the same runtime)",
       "",
       `  ${url}`,
       "",
-      "Keep this URL private: it carries the session token. Press Ctrl+C to stop.",
+      "Sign in and configure keys in the browser. Press Ctrl+C to stop.",
       "",
     ].join("\n"),
   );

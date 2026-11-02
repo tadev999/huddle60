@@ -27,10 +27,10 @@ Huddle60 được thiết kế và triển khai theo mô hình **zero-infra**, k
 | **Core Logic** | `src/core/` | Canonical RFC 8785, SHA-256 hash, parse policy, parse command, parse issue form, parse PR block, baseline snapshot, decision receipt, render phản hồi Markdown, từ điển `vocabulary.ts` và danh mục mã lỗi `errors.ts`. |
 | **Local App Server** | `src/app/` | HTTP server Node.js chạy tại `127.0.0.1`, quản lý session token, kiểm tra CSRF/Host/Origin, cung cấp REST API cho giao diện người dùng. |
 | **Local UI** | `ui/` | Giao diện Single Page Application (HTML/CSS/JS thuần không cần build), tương tác trực tiếp với Local App Server. |
-| **Planner Engine** | `src/planner/` | Tích hợp `@google/genai`, prompt kỹ thuật và schema cho Gemini; `IssueTreeCreator` hỗ trợ tạo cây Issues cha-con (hỗ trợ native sub-issues và Projects v2) kèm cơ chế tracking node ledger. |
+| **Planner Engine** | `src/planner/` | Tích hợp `@google/genai`, prompt kỹ thuật và schema cho Gemini; `explorer.ts` đọc repo (bản đồ, manifest, scout chọn file liên quan); `knowledge.ts` sinh gói tri thức `.huddle60/knowledge.md`; `IssueTreeCreator` hỗ trợ tạo cây Issues cha-con (hỗ trợ native sub-issues và Projects v2) kèm cơ chế tracking node ledger. |
 | **Workflow Service** | `src/workflow/` | Điều phối snapshot, kiểm tra chữ ký/hash, xác thực quyết định, xử lý status check PR (`huddle60/baseline`) và sinh context cho coding agent (`context.ts`). |
 | **Adapters** | `src/adapters/` | Kết nối GitHub API (Octokit tự động retry/throttle), Git Data API evidence branch (`git-evidence.ts`), Gemini API (`gemini.ts`), và in-memory adapter (`memory.ts`) cho test. |
-| **CLI & Action Entrypoints** | `src/entry/` | `cli.ts` (các lệnh `ui`, `init`, `context`, `init-evidence`, `validate-policy`, `plan-preview`) và `action.ts` (GitHub Action runner cho issue comment và pull request). |
+| **CLI & Action Entrypoints** | `src/entry/` | `cli.ts` (các lệnh `ui`, `init`, `context`, `init-evidence`, `validate-policy`, `plan-preview`, `knowledge`) và `action.ts` (GitHub Action runner cho issue comment và pull request). |
 | **Templates** | `templates/` | Bộ template chuẩn bị sẵn để tích hợp vào repository mục tiêu (`policy.yml`, `huddle60.yml`, Issue forms, PR template, `AGENTS.md`). |
 
 ### 1.3 Ranh giới an ninh & Nguyên tắc hoạt động
@@ -244,12 +244,19 @@ evidence:
 acceptance:
   build_workflows:
     - .github/workflows/build.yml
+planner:
+  max_nodes: 60
+  plan_ttl_days: 30
+  read_source: true        # Cho planner đọc source code liên quan trước khi lập kế hoạch
+  max_source_files: 12     # Số file tối đa scout được chọn (0 = chỉ dùng bản đồ repo)
+  source_deny: []          # Đường dẫn bổ sung không bao giờ gửi cho model
 ```
 
 ### Quy tắc xác thực Policy:
 - **Định danh Role bằng User ID**: So sánh trực tiếp giá trị numeric `user.id` từ GitHub webhook/API. Giá trị `login` chỉ mang tính chất ghi chú đọc hiểu.
 - **Phân tách vai trò**: Một người dùng có thể thuộc cả role `po` và `dev`. Tuyệt đối không đưa tài khoản Bot vào các role này.
 - **Đường dẫn nhạy cảm (`sensitive_paths`)**: Mọi PR có chứa thay đổi trong các đường dẫn này sẽ bị từ chối chạy ở lane `fast`.
+- **Đọc source khi lập kế hoạch (`planner.*`)**: `source_deny` chỉ mở rộng danh sách chặn mặc định (`.env*`, khóa, secrets), không thu hẹp được. Đặt `read_source: false` nếu tổ chức không cho phép gửi code tới nhà cung cấp model.
 - **Validation**: Nếu file policy bị sai cú pháp hoặc vi phạm schema, toàn bộ các thao tác xử lý lệnh sẽ dừng lại với mã lỗi `E_POLICY_INVALID`.
 
 ---
@@ -426,35 +433,71 @@ Khi thực hiện lệnh `accept`, hệ thống kiểm tra thông tin workflow r
 
 ### 7.1 Cơ chế hoạt động & Xác thực Local
 
-Local App là trung tâm tương tác trực quan chạy cục bộ trên máy trạm của PO và DEV:
+Local và SaaS dùng chung browser engine. Server chỉ phục vụ giao diện và đổi mã OAuth:
 
 ```bash
-# Đăng nhập GitHub qua GitHub CLI
-gh auth login
-
-# Cung cấp Gemini API key (nếu cần lập kế hoạch phân rã)
-export GEMINI_API_KEY="your-gemini-key"
-
 # Khởi chạy giao diện
 npx huddle60 ui --repo owner/repo
 ```
 
 - **Quản lý Credentials**:
-  - GitHub Token: Tự động trích xuất từ biến môi trường `GH_TOKEN` / `GITHUB_TOKEN`, hoặc lấy qua lệnh `gh auth token`.
-  - Gemini API Key: Lấy từ biến môi trường `GEMINI_API_KEY`, hoặc đọc từ macOS Keychain (service: `huddle60-gemini`). Nếu không có key, chức năng phân rã kế hoạch sẽ bị ẩn, các tính năng duyệt và theo dõi trạng thái vẫn hoạt động bình thường.
+  - Đăng nhập GitHub qua OAuth hoặc nhập PAT trong Cài đặt; Gemini key cũng nhập tại đây.
+  - UI không đọc `gh`, Keychain, biến môi trường chứa credential hay file cấu hình cũ. Không tự chuyển bí mật từ máy vào trình duyệt. Các lệnh CLI ngoài `ui` giữ cách xác thực cũ.
+  - Mặc định token/key ở `sessionStorage`. Bật **Ghi nhớ trên thiết bị này** để chuyển sang `localStorage`; tab mới cùng origin sử dụng lại cả hai. Bỏ chọn xóa bản lưu lâu dài, giữ phiên của tab hiện tại.
+  - Đăng xuất xóa cả hai loại lưu trữ và thông báo các tab cùng origin bỏ credential trong bộ nhớ. Thay đổi credential từ tab khác làm mới phiên và bỏ draft kế hoạch của tab đó.
+  - Chỉ ghi nhớ trên thiết bị cá nhân: JavaScript cùng origin đọc được key. Subdomain khác nhau không chia sẻ credential.
+  - OAuth localhost cần cấu hình `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` trên server và callback URL khớp địa chỉ thực tế. Không có OAuth thì dùng PAT.
 - **Bảo mật Server Local**:
-  - Server Node.js lắng nghe nghiêm ngặt tại địa chỉ `127.0.0.1`.
-  - Mỗi phiên làm việc sinh một mã ngẫu nhiên cryptographically secure 32-byte session token. Mã này được truyền qua URL hash (`#token=...`) khi mở trình duyệt, sau đó UI lưu vào `sessionStorage` và xóa khỏi thanh địa chỉ URL.
-  - Mọi HTTP request tới API nội bộ bắt buộc mang header `X-Huddle60-Token`.
-  - Kiểm tra tiêu đề `Host` (chỉ chấp nhận `127.0.0.1` hoặc `localhost`) và tiêu đề `Origin` để phòng chống triệt để các cuộc tấn công DNS Rebinding và Cross-Site Request Forgery (CSRF).
+  - Mặc định bind `127.0.0.1`, kiểm tra `Host` và `Origin`.
+  - Không còn session token hay Node data API; các route nghiệp vụ được dispatch trực tiếp trong browser engine.
   - Áp dụng Content Security Policy (CSP) chặt chẽ, vô hiệu hóa inline scripts và ngăn chặn embedding iframe.
 
 ### 7.2 Lập kế hoạch với Gemini (`@google/genai`)
 
 1. PO nhập tiêu đề và yêu cầu bài toán bằng ngôn ngữ tự nhiên trên giao diện.
-2. Local App gọi Gemini API thông qua mô hình structured output (`gemini-2.5-pro` hoặc cấu hình qua `GEMINI_MODEL`).
-3. Model trả về danh sách có cấu trúc bao gồm các Epic, Story và Task kèm theo tiêu chí nghiệm thu (AC) chuẩn hóa.
-4. PO có thể cung cấp thêm thông tin làm rõ (refinement) để sinh bản sửa đổi mới (`revision`) trước khi đồng ý tạo.
+2. Local App đọc source code trước khi lập kế hoạch (mục 7.2.1).
+3. Browser engine gọi Gemini API bằng structured output với model chọn trong Cài đặt.
+4. Model trả về danh sách có cấu trúc bao gồm các Epic, Story và Task kèm theo tiêu chí nghiệm thu (AC) chuẩn hóa, bản đồ tác động và câu trả lời đề xuất cho các câu hỏi mở.
+5. PO có thể cung cấp thêm thông tin làm rõ (refinement) hoặc bấm **Dùng đề xuất của AI** để sinh bản sửa đổi mới (`revision`) trước khi đồng ý tạo.
+
+#### 7.2.1 Đọc source code trước khi lập kế hoạch (`src/planner/explorer.ts`)
+
+Planner đọc repository theo cách một kỹ sư làm trước khi ước lượng, gồm hai lượt gọi model:
+
+| Bước | Nội dung | Giới hạn |
+|---|---|---|
+| 1. Bản đồ repo | Cây file của nhánh mặc định (Git Trees API), bỏ `node_modules/`, `dist/`, file nhị phân; sắp xếp file nông trước và đếm số file theo thư mục cấp 1 | 600 đường dẫn, cache 5 phút |
+| 2. Tổng quan | Manifest của nhiều hệ sinh thái (`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, `Package.swift`, `pubspec.yaml`...), `README.md` và gói tri thức `.huddle60/knowledge.md` | 3.000 ký tự mỗi manifest, 20.000 ký tự cho gói tri thức |
+| 3. Scout | Model chọn các file liên quan nhất tới yêu cầu (entry point, route, model, schema, service, test gần nhất) | `planner.max_source_files` (mặc định 12) |
+| 4. Đọc file | Chỉ đọc file có trong bản đồ, không bị chặn, dưới 200 KB | 12.000 ký tự mỗi file, 80.000 ký tự tổng |
+| 5. Lập kế hoạch | Prompt chứa `<repository_overview>`, `<project_knowledge>`, `<repo_map>`, `<source_files>` | Prompt `planner-v5` |
+
+Nguyên tắc:
+
+- **Không chặn:** scout lỗi hoặc trả JSON sai thì vẫn lập kế hoạch với bản đồ repo. Không liệt kê được file thì quay về ngữ cảnh nông như trước.
+- **Đọc một lần cho mỗi bản nháp:** các lần refine dùng lại kết quả đã đọc, không tốn thêm lượt scout.
+- **Không bao giờ gửi bí mật cho model:** `.env*`, `*.pem`, `*.key`, `*.p12`, `*.keystore`, `id_rsa*`, `**/secrets/**`, file có `secret` hoặc `credential` trong tên, `*.tfstate` luôn bị loại, kể cả khi scout yêu cầu. Mở rộng bằng `planner.source_deny`.
+- **Nội dung repo là dữ liệu không đáng tin:** được bọc trong thẻ riêng và system prompt yêu cầu bỏ qua mọi chỉ thị bên trong (chống prompt injection qua comment hoặc README).
+- **Tắt được:** `planner.read_source: false` để không gửi nội dung code cho model.
+
+#### 7.2.2 Gói tri thức repo (`.huddle60/knowledge.md`)
+
+- Sinh bằng `npx huddle60 knowledge`: đọc repo (tối thiểu 20 file), tóm tắt kiến trúc, module, thuật ngữ nghiệp vụ, quy ước, cách chạy test và vùng nhạy cảm. File được ghi cục bộ; DEV review và commit qua PR.
+- Khi sinh lại, nội dung cũ được đưa vào prompt để giữ các ghi chú do người viết, trừ khi code mâu thuẫn.
+- Planner, scout và `huddle60 context` đều dùng file này, nên kế hoạch nhanh và rẻ hơn, coding agent biết quy ước dự án.
+
+#### 7.2.3 Bản đồ tác động (Impact Map)
+
+- Mỗi Story hoặc Task có trường `impact`: `files` (file dự kiến thay đổi), `reuse` (thành phần tái sử dụng), `tests` (test cần mở rộng hoặc thêm) và `confidence` (`low` / `medium` / `high`).
+- Đường dẫn không có trong repo được đánh dấu `(mới)`, giúp DEV phân biệt file sẽ tạo với file model đoán sai.
+- Ghi vào Issue dưới mục `### Bản đồ tác động (AI gợi ý)`. Mục này **không nằm trong `REQUIREMENT_SECTIONS`**, nên sửa nó không làm baseline bị stale và không cần PO duyệt lại.
+- `huddle60 context` đưa bản đồ này vào ngữ cảnh cho agent dưới dạng gợi ý, không giới hạn phạm vi.
+
+#### 7.2.4 Câu trả lời đề xuất (Suggested Answers)
+
+- Mỗi câu hỏi mở có thể kèm `suggestedAnswer` và `evidence` (ví dụ `src/auth/session.ts: SESSION_TTL_MINUTES = 30`). Model chỉ đề xuất khi có căn cứ từ code, gói tri thức hoặc tài liệu đính kèm.
+- Câu hỏi có đề xuất đủ căn cứ thường được đánh dấu không chặn.
+- PO bấm **Dùng N đề xuất của AI** (`POST /api/plans/:id/accept-suggestions`): mọi đề xuất được ghi thành một clarification và kế hoạch được sinh lại, không phải gõ tay.
 
 ### 7.3 Tạo cây Issues tự động (`IssueTreeCreator`)
 
@@ -467,19 +510,55 @@ Khi PO xác nhận tạo cây Issues:
 5. Tự động thiết lập quan hệ cha-con thông qua GitHub Sub-issues API (nếu repository đã bật tính năng này) hoặc cập nhật vào GitHub Projects v2.
 6. Cơ chế ledger ghi nhớ tiến độ tạo: nếu quá trình bị gián đoạn giữa chừng, PO có thể tiếp tục tạo lại mà không bị trùng lặp Issue.
 
-### 7.4 REST API của Local App
+### 7.4 Routes nội bộ của browser engine (Local và SaaS)
+
+Các tuyến `/api/*` bên dưới là lời gọi nội bộ trong trình duyệt, không phải HTTP API của server.
 
 | Phương thức | Tuyến đường | Mục đích |
 |---|---|---|
 | `GET` | `/api/session` | Lấy thông tin repository, người dùng hiện tại, role theo policy, trạng thái Gemini và default lane |
 | `POST` | `/api/plans` | Soạn thảo kế hoạch phân rã từ `{ title?, request }` |
 | `POST` | `/api/plans/:id/refine` | Yêu cầu tinh chỉnh lại kế hoạch với thông tin bổ sung `{ clarification }` |
+| `POST` | `/api/plans/:id/accept-suggestions` | Chấp nhận mọi câu trả lời AI đề xuất và sinh lại kế hoạch |
 | `POST` | `/api/plans/:id/create` | Bắt đầu tạo Request Issue và cây Issues tương ứng trên GitHub |
 | `GET` | `/api/items` | Truy vấn danh sách các Issue đang mở kèm trạng thái stage và cờ cảnh báo sửa đổi |
 | `POST` | `/api/issues/:n/decisions` | Thực hiện đăng comment lệnh `/huddle60 approve`, `ready`, hoặc `accept` bằng token của người dùng |
 | `GET` | `/api/issues/:n/replies/:commentId` | Tra cứu phản hồi từ bot GitHub Action tương ứng với comment lệnh đã gửi |
 | `GET` | `/api/builds` | Lấy danh sách các bản build thành công trên branch mặc định để PO chọn nghiệm thu |
 | `GET` | `/api/issues/:n/context` | Trích xuất toàn bộ ngữ cảnh baseline của Issue phục vụ coding agent trong IDE |
+
+### 7.5 Server mỏng dùng chung Local và SaaS (ví dụ huddle60.app)
+
+Ở cả Local và SaaS, **ứng dụng chạy trong trình duyệt của từng người**. Server chỉ phục vụ file tĩnh và đổi OAuth code lấy token. Server không lưu token; chỉ xử lý token tạm thời trong bước OAuth exchange, không proxy API nghiệp vụ GitHub/Gemini. `HUDDLE60_MODE=saas` không còn cần thiết.
+
+```mermaid
+flowchart LR
+  B["Trình duyệt<br/>ui/app.js + ui/engine.js"]
+  S["Server mỏng<br/>file tĩnh + /api/auth/github"]
+  GH["api.github.com"]
+  GM["Gemini API"]
+  B -->|tải app, 1 lần đăng nhập| S
+  B -->|token của người dùng| GH
+  B -->|key của người dùng| GM
+```
+
+| Thành phần | Vị trí | Ghi chú |
+|---|---|---|
+| Engine (`src/web/engine.ts` → `ui/engine.js`) | Trình duyệt | Local và SaaS đều nạp engine; dùng `LocalAppManager` ở chế độ `ephemeral`, `LocalApp`, planner, workflow và bảng route `src/app/routes.ts` |
+| Token GitHub, Gemini key | `sessionStorage` mặc định; `localStorage` khi chọn ghi nhớ | Chỉ lưu trong trình duyệt, cùng origin; server chỉ thấy GitHub token trong bước OAuth exchange, không lưu lại |
+| Repo đang chọn, model, repo gần đây | `localStorage` | Không chứa bí mật |
+| Bản nháp kế hoạch, tệp đính kèm | Bộ nhớ của tab | Không đi qua server |
+| OAuth | Server | `state` lưu trong cookie `huddle60_oauth` (`HttpOnly`, `Path=/api/auth`, 10 phút) và được so khớp khi callback. Token trả về qua URL fragment `#gh_token=…`; UI đọc rồi xóa ngay khỏi thanh địa chỉ. `returnUrl` chỉ nhận đường dẫn tương đối |
+| `/api/*` khác | Server | Trả `404 E_BROWSER_MODE`. Server không có API dữ liệu |
+| Thao tác ghi | Engine | Trả `401 E_AUTH` nếu người dùng chưa đăng nhập GitHub. Comment quyết định được đăng bằng token của chính họ |
+| CSP | Server | `connect-src` chỉ mở thêm `api.github.com`, `uploads.github.com`, `generativelanguage.googleapis.com`, `models.github.ai`. Không cho inline script |
+
+Băm SHA-256 dùng bản cài đặt thuần TypeScript (`src/core/sha256.ts`), cho cùng kết quả trên Node và trình duyệt. Kết quả trùng từng byte với `node:crypto`, nên baseline và evidence cũ vẫn hợp lệ.
+
+Khi deploy public: cấu hình `ALLOWED_HOSTS=huddle60.app`; thêm `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` nếu dùng OAuth. Build bằng `npm run build` để sinh `ui/engine.js`.
+
+> [!NOTE]
+> Tải trên server chỉ còn file tĩnh (đặt sau CDN) và 1 request mỗi lần đăng nhập. Hạn mức GitHub tính theo từng người dùng (5.000 request/giờ). Khách chưa đăng nhập dùng hạn mức không token **theo IP của chính họ** (60 request/giờ). Đánh đổi: token nằm trong trình duyệt nên phải giữ CSP chặt và chỉ gán nội dung bằng `textContent`.
 
 ---
 
@@ -571,6 +650,7 @@ Lệnh sử dụng token của người chạy (`gh auth token` hoặc biến m�
 - Baseline ID, mã Content Hash, Lane và trạng thái phê duyệt của PO/DEV.
 - Toàn bộ nội dung yêu cầu và tiêu chí nghiệm thu trích xuất từ **bản snapshot đã chốt**, không phụ thuộc vào các sửa đổi ngoài ý muốn trên GitHub Issue.
 - Cảnh báo trực quan nếu Issue đã bị sửa đổi sau thời điểm chốt baseline.
+- Bản đồ tác động của Issue (nếu có) dưới dạng gợi ý không ràng buộc, và lời nhắc đọc `.huddle60/knowledge.md` nếu file tồn tại.
 - Khối Markdown `<!-- huddle60:begin -->` chuẩn bị sẵn để dán vào PR body.
 
 ### 10.2 Quy ước trong `AGENTS.md`
@@ -623,6 +703,9 @@ npx huddle60 validate-policy [--file .github/huddle60/policy.yml]
 
 # Xem trước kế hoạch phân rã từ một file mô tả yêu cầu
 npx huddle60 plan-preview --file <path-to-request.md>
+
+# Sinh gói tri thức repo .huddle60/knowledge.md (review rồi commit qua PR)
+npx huddle60 knowledge [--repo owner/name] [--stdout]
 
 # Khởi tạo branch evidence độc lập
 npx huddle60 init-evidence [--repo owner/name] [--branch huddle60-evidence]

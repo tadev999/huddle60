@@ -19,9 +19,11 @@ import {
   parseRepoString,
   readConfig,
   writeConfig,
+  applyConfigPatch,
   type Huddle60Config,
 } from "../core/config.js";
 import { AiDlcError } from "../core/errors.js";
+import { base64ToUtf8, utf8ToBase64 } from "../core/encoding.js";
 import { POLICY_PATH, LEGACY_POLICY_PATH, parsePolicy, type Policy } from "../core/policy.js";
 import { systemClock, type Logger } from "../ports.js";
 
@@ -36,6 +38,9 @@ export interface AppManagerOptions {
   explicitRepo?: string;
   tenant?: string;
   logger: Logger;
+  /** Hosted mode: settings live in memory for one visitor; never read disk, server env tokens, gh CLI or Keychain. */
+  ephemeral?: boolean;
+  initialConfig?: Huddle60Config;
 }
 
 export type SetupMissingReason =
@@ -93,14 +98,21 @@ export class LocalAppManager {
   private cachedUserRepos: UserRepoItem[] | null = null;
   private cachedUserReposTime: number = 0;
   private canWriteRepo: boolean = false;
+  private memoryConfig: Huddle60Config;
 
-  constructor(private readonly options: AppManagerOptions) {}
+  constructor(private readonly options: AppManagerOptions) {
+    this.memoryConfig = { ...(options.initialConfig ?? {}) };
+  }
+
+  get isSignedIn(): boolean {
+    return Boolean(this.currentToken && this.githubUser);
+  }
 
   get app(): LocalApp {
     if (!this.activeApp) {
       throw new AiDlcError(
         "E_NOT_READY",
-        "Ứng dụng chưa được cấu hình hoàn chỉnh. Vui lòng hoàn tất trong mục Cài đặt.",
+        "The app is not configured yet. Complete setup in Settings.",
       );
     }
     return this.activeApp;
@@ -123,12 +135,15 @@ export class LocalAppManager {
     this.githubUser = null;
     this.canWriteRepo = false;
 
-    const fileConfig = await readConfig(this.options.tenant);
+    const ephemeral = Boolean(this.options.ephemeral);
+    const fileConfig = ephemeral ? this.memoryConfig : await readConfig(this.options.tenant);
     this.recentRepos = fileConfig.recentRepos ?? [];
 
     // 1. Resolve GitHub Token
     if (fileConfig.githubDisconnected) {
       this.currentToken = null;
+    } else if (ephemeral) {
+      this.currentToken = fileConfig.githubToken ?? null;
     } else {
       this.currentToken =
         process.env.GH_TOKEN ??
@@ -143,12 +158,14 @@ export class LocalAppManager {
     if (this.options.explicitRepo) {
       repoCandidate = this.options.explicitRepo;
       this.repoSource = "cli";
-    } else if (process.env.GITHUB_REPOSITORY) {
+    } else if (process.env.GITHUB_REPOSITORY && !ephemeral) {
       repoCandidate = process.env.GITHUB_REPOSITORY;
       this.repoSource = "env";
     } else if (fileConfig.repo) {
       repoCandidate = fileConfig.repo;
       this.repoSource = "config";
+    } else if (!this.options.tenant && ephemeral) {
+      this.repoSource = "none";
     } else if (!this.options.tenant) {
       const gitRemote = detectGitRemoteRepo();
       if (gitRemote) {
@@ -184,11 +201,17 @@ export class LocalAppManager {
     }
 
     // 3. Resolve Gemini Key & Model
-    this.currentGeminiKey =
-      process.env.GEMINI_API_KEY ?? fileConfig.geminiApiKey ?? getMacKeychainGeminiKey() ?? null;
+    this.currentGeminiKey = ephemeral
+      ? (fileConfig.geminiApiKey ?? null)
+      : (process.env.GEMINI_API_KEY ??
+        fileConfig.geminiApiKey ??
+        getMacKeychainGeminiKey() ??
+        null);
 
     this.currentGeminiModel =
-      process.env.AI_DLC_MODEL ?? fileConfig.geminiModel ?? "gemini-3.8-flash";
+      (ephemeral ? undefined : process.env.AI_DLC_MODEL) ??
+      fileConfig.geminiModel ??
+      "gemini-3.8-flash";
 
     if (!this.currentRepo) {
       this.missing.push("missing_repo");
@@ -281,6 +304,7 @@ export class LocalAppManager {
       model: modelInstance,
       clock: systemClock,
       logger: this.options.logger,
+      guest: !this.githubUser,
     });
   }
 
@@ -377,12 +401,16 @@ export class LocalAppManager {
       ) {
         throw new AiDlcError(
           "E_CONFIG",
-          `Không gian làm việc "${this.options.tenant}" chỉ quản lý các repository thuộc quyền sở hữu của "${this.options.tenant}" (ví dụ: ${this.options.tenant}/${parts[1]}).`,
+          `Workspace "${this.options.tenant}" only manages repositories owned by "${this.options.tenant}" (for example: ${this.options.tenant}/${parts[1]}).`,
         );
       }
     }
 
-    await writeConfig(patch, this.options.tenant);
+    if (this.options.ephemeral) {
+      this.memoryConfig = applyConfigPatch(this.memoryConfig, patch);
+    } else {
+      await writeConfig(patch, this.options.tenant);
+    }
     if (patch.repo !== undefined) {
       this.options.explicitRepo = undefined;
     }
@@ -400,7 +428,7 @@ export class LocalAppManager {
     error?: string;
   }> {
     const testToken = token || this.currentToken;
-    if (!testToken) return { ok: false, error: "Thiếu GitHub token" };
+    if (!testToken) return { ok: false, error: "A GitHub token is required" };
     try {
       const octokit = octokitFromToken(testToken);
       const { data } = await octokit.rest.users.getAuthenticated();
@@ -418,24 +446,30 @@ export class LocalAppManager {
     message: string;
     viewer?: { id: number; login: string; avatarUrl?: string };
   }> {
+    if (this.options.ephemeral) {
+      throw new AiDlcError(
+        "E_CONFIG",
+        "The browser app cannot use the server's GitHub CLI. Sign in with GitHub or enter a Personal Access Token.",
+      );
+    }
     const token = getGhCliToken();
     if (!token) {
       throw new AiDlcError(
         "E_CONFIG",
-        "Không tìm thấy phiên đăng nhập từ GitHub CLI (`gh`). Bạn có thể chạy `gh auth login` trong terminal hoặc nhập Personal Access Token bên dưới.",
+        "No GitHub CLI session found. Run `gh auth login` or enter a Personal Access Token.",
       );
     }
     const check = await this.testGithub(token);
     if (!check.ok || !check.viewer) {
       throw new AiDlcError(
         "E_CONFIG",
-        `Token từ GitHub CLI không hợp lệ: ${check.error || "Không thể xác thực"}`,
+        `Invalid GitHub CLI token: ${check.error || "Authentication failed"}`,
       );
     }
     await this.updateSettings({ githubToken: token });
     return {
       ok: true,
-      message: `Đã kết nối thành công với tài khoản @${check.viewer.login} từ GitHub CLI!`,
+      message: `Connected as @${check.viewer.login} using GitHub CLI.`,
       viewer: check.viewer,
     };
   }
@@ -452,7 +486,7 @@ export class LocalAppManager {
   async testGemini(apiKey?: string, model?: string): Promise<{ ok: boolean; error?: string }> {
     const key = apiKey || this.currentGeminiKey;
     const targetModel = model || this.currentGeminiModel;
-    if (!key) return { ok: false, error: "Thiếu Gemini API key" };
+    if (!key) return { ok: false, error: "A Gemini API key is required" };
     try {
       const ai = new GoogleGenAI({ apiKey: key });
       await ai.models.generateContent({
@@ -596,9 +630,8 @@ export class LocalAppManager {
 
   async initRepo(): Promise<{ ok: boolean; message: string }> {
     if (!this.currentToken)
-      throw new AiDlcError("E_CONFIG", "Cần kết nối GitHub token trước khi khởi tạo.");
-    if (!this.currentRepo)
-      throw new AiDlcError("E_CONFIG", "Cần chọn kho lưu trữ (repository) trước.");
+      throw new AiDlcError("E_CONFIG", "Connect GitHub before initializing the repository.");
+    if (!this.currentRepo) throw new AiDlcError("E_CONFIG", "Select a repository first.");
 
     const { owner, repo } = this.currentRepo;
     const octokit = octokitFromToken(this.currentToken);
@@ -606,7 +639,7 @@ export class LocalAppManager {
     if (!github.canWrite()) {
       throw new AiDlcError(
         "E_ROLE",
-        "Bạn không có quyền ghi (Push/Admin) trên repository này để khởi tạo chuẩn AI-DLC.",
+        "Write access (Push/Admin) is required to initialize AI-DLC in this repository.",
       );
     }
     const viewer = await github.viewer();
@@ -655,13 +688,16 @@ acceptance:
 planner:
   max_nodes: 60
   plan_ttl_days: 30
+  read_source: true
+  max_source_files: 12
+  source_deny: []
 `;
       await octokit.rest.repos.createOrUpdateFileContents({
         owner,
         repo,
         path: POLICY_PATH,
         message: "chore: initialize huddle60 policy",
-        content: Buffer.from(policyContent, "utf8").toString("base64"),
+        content: utf8ToBase64(policyContent),
         branch: defaultBranch,
       });
     }
@@ -698,7 +734,7 @@ jobs:
         repo,
         path: workflowPath,
         message: "chore: add huddle60 GitHub Actions workflow",
-        content: Buffer.from(workflowContent, "utf8").toString("base64"),
+        content: utf8ToBase64(workflowContent),
         branch: defaultBranch,
       });
     }
@@ -708,7 +744,7 @@ jobs:
 
     return {
       ok: true,
-      message: `Khởi tạo thành công AI-DLC cho ${owner}/${repo} với tài khoản @${viewer.login}!`,
+      message: `Initialized AI-DLC for ${owner}/${repo} as @${viewer.login}.`,
     };
   }
 
@@ -729,7 +765,7 @@ jobs:
     const octokit = octokitFromToken(this.currentToken);
     const clean = username.replace(/^@/, "").trim();
     if (!clean) {
-      throw new AiDlcError("E_CONFIG", "Vui lòng nhập GitHub username.");
+      throw new AiDlcError("E_CONFIG", "Enter a GitHub username.");
     }
     try {
       const { data } = await octokit.rest.users.getByUsername({ username: clean });
@@ -740,7 +776,7 @@ jobs:
       };
     } catch (err: unknown) {
       if (isStatus(err, 404)) {
-        throw new AiDlcError("E_CONFIG", `Không tìm thấy tài khoản GitHub: @${clean}`);
+        throw new AiDlcError("E_CONFIG", `GitHub account not found: @${clean}`);
       }
       throw new AiDlcError("E_GITHUB_API", err instanceof Error ? err.message : String(err));
     }
@@ -752,32 +788,29 @@ jobs:
     roles: Policy["roles"];
   }> {
     if (!this.currentToken) {
-      throw new AiDlcError("E_ROLE", "Cần kết nối GitHub để cập nhật phân quyền.");
+      throw new AiDlcError("E_ROLE", "Connect GitHub to update roles.");
     }
     if (!this.currentRepo) {
-      throw new AiDlcError("E_CONFIG", "Chưa chọn repository.");
+      throw new AiDlcError("E_CONFIG", "No repository selected.");
     }
     if (!this.canEditRoles()) {
       throw new AiDlcError(
         "E_ROLE",
-        "Bạn không có quyền Maintainer hoặc quyền ghi (Admin/Push) trên repository này để chỉnh sửa phân quyền.",
+        "Maintainer or repository write access (Admin/Push) is required to edit roles.",
       );
     }
 
     if (!newRoles.po || newRoles.po.length === 0) {
-      throw new AiDlcError("E_ROLE", "Dự án phải có ít nhất 1 Product Owner (PO).");
+      throw new AiDlcError("E_ROLE", "At least one Product Owner is required.");
     }
     if (!newRoles.maintainer || newRoles.maintainer.length === 0) {
-      throw new AiDlcError("E_ROLE", "Dự án phải có ít nhất 1 Maintainer.");
+      throw new AiDlcError("E_ROLE", "At least one Maintainer is required.");
     }
 
     const allMembers = [...newRoles.po, ...(newRoles.dev || []), ...newRoles.maintainer];
     for (const m of allMembers) {
       if (m.login.endsWith("[bot]")) {
-        throw new AiDlcError(
-          "E_ROLE",
-          `Tài khoản bot ${m.login} không thể giữ vai trò trong policy.`,
-        );
+        throw new AiDlcError("E_ROLE", `Bot account ${m.login} cannot hold a policy role.`);
       }
     }
 
@@ -799,7 +832,7 @@ jobs:
       });
       if ("sha" in data && "content" in data) {
         sha = data.sha;
-        existingYaml = Buffer.from(data.content, "base64").toString("utf8");
+        existingYaml = base64ToUtf8(data.content);
       }
     } catch (err1: unknown) {
       if (isStatus(err1, 404)) {
@@ -813,7 +846,7 @@ jobs:
           if ("sha" in data && "content" in data) {
             targetPath = LEGACY_POLICY_PATH;
             sha = data.sha;
-            existingYaml = Buffer.from(data.content, "base64").toString("utf8");
+            existingYaml = base64ToUtf8(data.content);
           }
         } catch {}
       }
@@ -857,6 +890,9 @@ acceptance:
 planner:
   max_nodes: 60
   plan_ttl_days: 30
+  read_source: true
+  max_source_files: 12
+  source_deny: []
 `;
     }
 
@@ -865,7 +901,7 @@ planner:
       repo,
       path: targetPath,
       message: "chore(policy): update team roles (PO, DEV, Maintainer) [skip ci]",
-      content: Buffer.from(updatedYaml, "utf8").toString("base64"),
+      content: utf8ToBase64(updatedYaml),
       ...(sha ? { sha } : {}),
       branch: defaultBranch,
     });
@@ -874,7 +910,7 @@ planner:
 
     return {
       ok: true,
-      message: "Đã cập nhật phân quyền thành công trên GitHub!",
+      message: "Roles updated on GitHub.",
       roles: this.currentPolicy ? this.currentPolicy.roles : newRoles,
     };
   }

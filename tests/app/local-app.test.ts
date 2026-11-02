@@ -297,7 +297,7 @@ describe("LocalApp", () => {
 
       const session = await guestApp.session();
       expect(session.roles).toEqual([]);
-      expect(session.viewer.login).toBe("guest");
+      expect(session.viewer?.login).toBe("guest");
 
       const items = await guestApp.listItems();
       expect(items.some((i) => i.number === story.number)).toBe(true);
