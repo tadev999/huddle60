@@ -692,12 +692,13 @@ export class LocalApp {
       }));
   }
 
-  async context(issueNumber: number): Promise<string> {
+  async context(issueNumber: number, draft = false): Promise<string> {
     const policy = await this.workflow.policy();
     return renderAgentContext(
       { github: this.deps.github, evidence: this.deps.evidence, workflow: this.workflow },
       policy,
       issueNumber,
+      draft,
     );
   }
 
@@ -768,6 +769,100 @@ export class LocalApp {
 
     this.invalidateItemsCache();
     return updated;
+  }
+
+  /**
+   * Removes a work item and every open descendant from the board by closing them as
+   * "not planned" (GitHub only lets repository admins delete Issues, and closing can be undone).
+   * Children are closed before their parent so a partial failure never orphans open children.
+   */
+  async deleteWork(issueNumber: number): Promise<{
+    deleted: number[];
+    failed: Array<{ number: number; error: string }>;
+  }> {
+    const policy = await this.workflow.policy();
+    const viewer = await this.viewer();
+    if (!hasRole(policy, viewer.id, "po") && !hasRole(policy, viewer.id, "maintainer")) {
+      throw new AiDlcError(
+        "E_ROLE",
+        `${viewer.login} cannot delete work: this requires the po or maintainer role in the policy.`,
+      );
+    }
+    const root = await this.deps.github.getIssue(issueNumber);
+    if (root.isPullRequest || root.state !== "open")
+      throw new AiDlcError("E_SYNTAX", `#${issueNumber} is not an open Issue.`);
+    if (kindFromLabels(root.labels) === null)
+      throw new AiDlcError("E_WRONG_KIND", `#${issueNumber} is not a work item.`);
+
+    const order = await this.descendantsFirst(issueNumber);
+    const deleted: number[] = [];
+    const failed: Array<{ number: number; error: string }> = [];
+    const skipped = new Set<number>();
+    for (const { number, parent } of order) {
+      // Keep a parent open when one of its children could not be closed.
+      if (skipped.has(number)) {
+        if (parent !== null) skipped.add(parent);
+        continue;
+      }
+      try {
+        await this.deps.github.closeIssue(number, "not_planned");
+        deleted.push(number);
+      } catch (error) {
+        failed.push({
+          number,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        if (parent !== null) skipped.add(parent);
+        continue;
+      }
+      const note =
+        number === issueNumber
+          ? `🗑️ Work deleted by @${viewer.login} in huddle60 (closed as not planned).`
+          : `🗑️ Deleted together with parent #${issueNumber} by @${viewer.login} in huddle60 (closed as not planned).`;
+      // The audit note is best effort; the Issue is already closed.
+      await this.deps.github.createComment(number, note).catch((error: unknown) => {
+        this.deps.logger.warn("could not comment on deleted work", {
+          issue: number,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
+    this.invalidateItemsCache();
+    return { deleted, failed };
+  }
+
+  /** The root and its open descendants, deepest first; cycles in `### Issue cha` are ignored. */
+  private async descendantsFirst(
+    rootNumber: number,
+  ): Promise<Array<{ number: number; parent: number | null }>> {
+    const seen = new Map<number, IssueData>();
+    for (const label of Object.values(KIND_LABEL)) {
+      for (const issue of await this.deps.github.listOpenIssuesWithLabel(label))
+        seen.set(issue.number, issue);
+    }
+    const children = new Map<number, number[]>();
+    for (const issue of seen.values()) {
+      let parent: number | null = null;
+      try {
+        parent = this.workflow.snapshotOf(issue).parent;
+      } catch {
+        continue;
+      }
+      if (parent === null || parent === issue.number) continue;
+      const list = children.get(parent) ?? [];
+      list.push(issue.number);
+      children.set(parent, list);
+    }
+    const result: Array<{ number: number; parent: number | null }> = [];
+    const visited = new Set<number>();
+    const walk = (number: number, parent: number | null) => {
+      if (visited.has(number)) return;
+      visited.add(number);
+      for (const child of (children.get(number) ?? []).sort((a, b) => a - b)) walk(child, number);
+      result.push({ number, parent });
+    };
+    walk(rootNumber, null);
+    return result;
   }
 
   async refineIssueWithAi(

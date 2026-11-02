@@ -249,8 +249,13 @@ export function createRoutes(deps: RouteDeps): Route[] {
     {
       method: "GET",
       pattern: /^\/api\/issues\/(\d{1,9})\/context$/u,
-      handle: async (m, _b, tenant) => ({
-        markdown: await (await getAppFor(tenant)).context(Number(m[1])),
+      handle: async (m, _b, tenant, url) => ({
+        markdown: await (
+          await getAppFor(tenant)
+        ).context(
+          Number(m[1]),
+          url.searchParams.get("draft") === "true" || url.searchParams.get("draft") === "1",
+        ),
       }),
     },
     {
@@ -264,6 +269,12 @@ export function createRoutes(deps: RouteDeps): Route[] {
       signedIn: true,
       handle: async (m, body, tenant) =>
         (await getAppFor(tenant)).updateIssueDetails(Number(m[1]), UpdateIssueInput.parse(body)),
+    },
+    {
+      method: "DELETE",
+      pattern: /^\/api\/issues\/(\d{1,9})$/u,
+      signedIn: true,
+      handle: async (m, _b, tenant) => (await getAppFor(tenant)).deleteWork(Number(m[1])),
     },
     {
       method: "POST",

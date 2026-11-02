@@ -65,7 +65,7 @@ class ApiError extends Error {
 let enginePromise = null;
 
 function loadEngine() {
-  enginePromise ??= import("/engine.js?v=20261102_8").then((mod) =>
+  enginePromise ??= import("/engine.js?v=20261102_9").then((mod) =>
     mod.startEngine(document.querySelector('meta[name="huddle60-oauth"]')?.content === "1"),
   );
   return enginePromise;
@@ -305,30 +305,113 @@ async function promptGuestLogin(actionName) {
   }
 }
 
+function closeActionsDropdowns() {
+  document.querySelectorAll("details.actions-dropdown[open]").forEach((d) => (d.open = false));
+}
+
+window.addEventListener("click", (e) => {
+  if (!e.target.closest("details.actions-dropdown")) {
+    closeActionsDropdowns();
+  }
+});
+
 function actionsFor(item) {
+  const controls = [];
   const pending = state.pending.get(item.number);
-  if (pending) return [h("span", { class: "meta" }, `${pending} · Waiting for Actions`)];
-  const buttons = [
-    h(
-      "button",
-      {
-        class: "btn ghost btn-share-task",
-        title: "Copy a link to share with your team",
-        onclick: (e) => copyTaskShareLink(e.currentTarget, item),
-      },
-      "🔗 Share",
-    ),
-    h(
-      "a",
-      {
-        class: "btn ghost",
-        href: item.url,
-        target: "_blank",
-        rel: "noopener noreferrer",
-        title: "Open on GitHub",
-      },
-      "↗",
-    ),
+
+  if (pending) {
+    controls.push(
+      h(
+        "span",
+        { class: "meta", title: "Waiting for GitHub Actions to process the command..." },
+        `⏳ ${pending} · Waiting for Actions`,
+      ),
+    );
+  } else {
+    // 1. Primary state transition CTAs (Approve / Ready / Accept)
+    const hasChildren = state.items.some((other) => other.parent === item.number);
+    if (hasRole("dev") && item.stage !== "in-progress" && (item.kind === "task" || !hasChildren)) {
+      const lanes = readyLanes(item);
+      if (lanes.length > 0) {
+        const select = h(
+          "select",
+          { title: "Delivery lane" },
+          lanes.map((lane) => h("option", { value: lane, selected: lane === "standard" }, lane)),
+        );
+        controls.push(
+          select,
+          h(
+            "button",
+            {
+              class: "btn",
+              title: "Developer confirms readiness",
+              onclick: (e) =>
+                decide(e.currentTarget, item, { action: "ready", lane: select.value }),
+            },
+            "Ready",
+          ),
+        );
+      }
+    }
+    if (hasRole("po") && item.kind !== "task" && item.stage === "awaiting-approval") {
+      controls.push(
+        h(
+          "button",
+          {
+            class: "btn primary",
+            title: "Product Owner approves the current requirements",
+            onclick: (e) => decide(e.currentTarget, item, { action: "approve" }),
+          },
+          "Approve",
+        ),
+      );
+    }
+    if (hasRole("po") && item.kind !== "task" && item.stage === "in-progress") {
+      controls.push(
+        h(
+          "button",
+          {
+            class: "btn primary",
+            title: "Product Owner accepts a merged build",
+            onclick: (e) => accept(e.currentTarget, item),
+          },
+          "Accept",
+        ),
+      );
+    }
+
+    // Guidance for Guest users (without role)
+    if (!hasRole("dev") && !hasRole("po")) {
+      if (item.stage === "awaiting-approval" && item.kind !== "task") {
+        controls.push(
+          h(
+            "button",
+            {
+              class: "btn ghost",
+              title: "Approve requirements (guests: click to sign in)",
+              onclick: () => promptGuestLogin("approve requirements"),
+            },
+            "Approve",
+          ),
+        );
+      } else if (item.stage !== "in-progress") {
+        controls.push(
+          h(
+            "button",
+            {
+              class: "btn ghost",
+              title: "Confirm readiness (guests: click to sign in)",
+              onclick: () => promptGuestLogin("confirm readiness"),
+            },
+            "Ready",
+          ),
+        );
+      }
+    }
+  }
+
+  // 2. High-frequency Helper CTA: Context (for AI coding agents)
+  controls.push(
     h(
       "button",
       {
@@ -338,100 +421,102 @@ function actionsFor(item) {
       },
       "Context",
     ),
-  ];
+  );
+
+  // 3. Overflow Menu "···" (Edit, Share, GitHub, Delete)
+  const menuItems = [];
+
   if (hasRole("dev") || hasRole("po")) {
-    buttons.push(
+    menuItems.push(
       h(
         "button",
         {
-          class: "btn ghost",
-          title: "Edit the specification with AI assistance",
-          onclick: () => openSpecEditor(item),
-        },
-        "✏️ Edit",
-      ),
-    );
-  }
-  const hasChildren = state.items.some((other) => other.parent === item.number);
-  if (hasRole("dev") && item.stage !== "in-progress" && (item.kind === "task" || !hasChildren)) {
-    const lanes = readyLanes(item);
-    if (lanes.length > 0) {
-      const select = h(
-        "select",
-        { title: "Delivery lane" },
-        lanes.map((lane) => h("option", { value: lane, selected: lane === "standard" }, lane)),
-      );
-      buttons.push(
-        select,
-        h(
-          "button",
-          {
-            class: "btn",
-            title: "Developer confirms readiness",
-            onclick: (e) => decide(e.currentTarget, item, { action: "ready", lane: select.value }),
+          class: "actions-menu-item",
+          type: "button",
+          title: "Edit specification and test criteria with AI",
+          onclick: () => {
+            closeActionsDropdowns();
+            openSpecEditor(item);
           },
-          "Ready",
-        ),
-      );
-    }
-  }
-  if (hasRole("po") && item.kind !== "task" && item.stage === "awaiting-approval") {
-    buttons.push(
-      h(
-        "button",
-        {
-          class: "btn primary",
-          title: "Product Owner approves the current requirements",
-          onclick: (e) => decide(e.currentTarget, item, { action: "approve" }),
         },
-        "Approve",
-      ),
-    );
-  }
-  if (hasRole("po") && item.kind !== "task" && item.stage === "in-progress") {
-    buttons.push(
-      h(
-        "button",
-        {
-          class: "btn primary",
-          title: "Product Owner accepts a merged build",
-          onclick: (e) => accept(e.currentTarget, item),
-        },
-        "Accept",
+        h("span", { class: "menu-icon" }, "✏️"),
+        "Edit specification",
       ),
     );
   }
 
-  // Helpful guidance for Guest users (without role)
-  if (!hasRole("dev") && !hasRole("po")) {
-    if (item.stage === "awaiting-approval" && item.kind !== "task") {
-      buttons.push(
-        h(
-          "button",
-          {
-            class: "btn ghost",
-            title: "Approve requirements (guests: click to sign in)",
-            onclick: () => promptGuestLogin("approve requirements"),
+  menuItems.push(
+    h(
+      "button",
+      {
+        class: "actions-menu-item btn-share-task",
+        type: "button",
+        title: "Copy link to share with team",
+        onclick: (e) => {
+          copyTaskShareLink(e.currentTarget, item);
+          setTimeout(closeActionsDropdowns, 400);
+        },
+      },
+      h("span", { class: "menu-icon" }, "🔗"),
+      "Share link",
+    ),
+    h(
+      "a",
+      {
+        class: "actions-menu-item",
+        href: item.url,
+        target: "_blank",
+        rel: "noopener noreferrer",
+        title: "View on GitHub",
+        onclick: () => closeActionsDropdowns(),
+      },
+      h("span", { class: "menu-icon" }, "↗"),
+      "View on GitHub",
+    ),
+  );
+
+  if (hasRole("po") || hasRole("maintainer")) {
+    menuItems.push(
+      h("hr", { class: "actions-menu-divider" }),
+      h(
+        "button",
+        {
+          class: "actions-menu-item danger",
+          type: "button",
+          title: "Delete this work and all child work",
+          onclick: async (e) => {
+            closeActionsDropdowns();
+            await deleteWork(e.currentTarget, item);
           },
-          "Approve",
-        ),
-      );
-    } else if (item.stage !== "in-progress") {
-      buttons.push(
-        h(
-          "button",
-          {
-            class: "btn ghost",
-            title: "Confirm readiness (guests: click to sign in)",
-            onclick: () => promptGuestLogin("confirm readiness"),
-          },
-          "Ready",
-        ),
-      );
-    }
+        },
+        h("span", { class: "menu-icon" }, "🗑"),
+        "Delete work",
+      ),
+    );
   }
 
-  return buttons;
+  const dropdown = h(
+    "details",
+    {
+      class: "actions-dropdown",
+      onkeydown: (e) => {
+        if (e.key === "Escape") closeActionsDropdowns();
+      },
+    },
+    h(
+      "summary",
+      {
+        class: "btn ghost btn-icon",
+        "aria-label": "More options",
+        title: "More options",
+      },
+      "•••",
+    ),
+    h("div", { class: "actions-menu" }, ...menuItems),
+  );
+
+  controls.push(dropdown);
+  return controls;
 }
 
 function renderItems() {
@@ -685,18 +770,120 @@ async function accept(button, item) {
   await decide(button, item, { action: "accept", runId });
 }
 
-async function showContext(button, item) {
+/** Open descendants of an item on the board, cycle-safe. */
+function descendantsOf(item) {
+  const result = [];
+  const visited = new Set([item.number]);
+  const queue = [item.number];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    for (const other of state.items) {
+      if (other.parent !== current || visited.has(other.number)) continue;
+      visited.add(other.number);
+      result.push(other);
+      queue.push(other.number);
+    }
+  }
+  return result;
+}
+
+async function deleteWork(button, item) {
+  const descendants = descendantsOf(item);
+  const body = h(
+    "div",
+    {},
+    h("p", {}, `Delete #${item.number} · ${displayTitle(item)}?`),
+    descendants.length > 0
+      ? h(
+          "div",
+          {},
+          h(
+            "p",
+            { class: "muted" },
+            `${descendants.length} child work item${descendants.length === 1 ? "" : "s"} will also be deleted:`,
+          ),
+          h(
+            "ul",
+            {},
+            descendants.map((child) =>
+              h("li", {}, `#${child.number} · ${child.kind} · ${displayTitle(child)}`),
+            ),
+          ),
+        )
+      : null,
+    h(
+      "p",
+      { class: "muted" },
+      "The Issues are closed as “not planned” on GitHub and can be reopened there.",
+    ),
+  );
+  if ((await openDialog({ title: `Delete #${item.number}`, body, okLabel: "Delete" })) !== "ok")
+    return false;
   const result = await withBusy(button, async () => {
     try {
-      return await api(`/api/issues/${item.number}/context`);
+      return await api(`/api/issues/${item.number}`, undefined, "DELETE");
     } catch (error) {
+      logError(`#${item.number} delete failed`, error);
+      return null;
+    }
+  });
+  if (!result) return false;
+  if (result.failed.length > 0) {
+    log("fail", `#${item.number} deleted partially`, {
+      text: [
+        result.deleted.length > 0
+          ? `Deleted: ${result.deleted.map((n) => `#${n}`).join(", ")}`
+          : "Nothing deleted.",
+        ...result.failed.map((f) => `#${f.number}: ${f.error}`),
+      ].join("\n"),
+    });
+  } else {
+    log("ok", `Deleted ${result.deleted.map((n) => `#${n}`).join(", ")}`);
+  }
+  await loadItems(true);
+  return result.deleted.includes(item.number);
+}
+
+async function showContext(button, item, draft = false) {
+  const result = await withBusy(button, async () => {
+    try {
+      const url = draft
+        ? `/api/issues/${item.number}/context?draft=true`
+        : `/api/issues/${item.number}/context`;
+      return await api(url);
+    } catch (error) {
+      if (error.code === "E_NOT_READY" && !draft) {
+        const viewDraft = await openDialog({
+          title: `#${item.number} is not ready yet`,
+          body: h(
+            "div",
+            {},
+            h(
+              "p",
+              {},
+              `#${item.number} does not have a confirmed Ready decision from GitHub Actions yet.`,
+            ),
+            h(
+              "p",
+              { class: "muted" },
+              "Would you like to open the Draft Context for planning and reference?",
+            ),
+          ),
+          okLabel: "View Draft Context",
+        });
+        if (viewDraft === "ok") {
+          return await showContext(button, item, true);
+        }
+        return null;
+      }
       logError(`#${item.number} context`, error);
       return null;
     }
   });
   if (!result) return;
+  const isDraft = draft || result.markdown?.startsWith("# DRAFT context");
   await openDialog({
-    title: `Context #${item.number} · ${displayTitle(item)}`,
+    title: `${isDraft ? "Draft Context" : "Context"} #${item.number} · ${displayTitle(item)}`,
     body: h("pre", {}, result.markdown),
     copyText: result.markdown,
   });
@@ -714,6 +901,22 @@ async function openSpecEditor(item) {
   $("#spec-issue-num").textContent = `#${item.number}`;
   $("#spec-gh-link").href = item.url;
   $("#spec-alert-stale").hidden = item.stage === "awaiting-approval";
+
+  // Share button inside spec modal
+  const shareBtn = $("#spec-share-btn");
+  if (shareBtn) {
+    shareBtn.onclick = (e) => copyTaskShareLink(e.currentTarget, item);
+  }
+
+  // Delete button inside spec modal (Option 3)
+  const deleteBtn = $("#spec-btn-delete");
+  if (deleteBtn) {
+    deleteBtn.hidden = !(hasRole("po") || hasRole("maintainer"));
+    deleteBtn.onclick = async (e) => {
+      const deleted = await deleteWork(e.currentTarget, item);
+      if (deleted) dialog.close();
+    };
+  }
 
   $("#spec-input-title").value = "Loading...";
   $("#spec-input-body").value = "Loading from GitHub...";

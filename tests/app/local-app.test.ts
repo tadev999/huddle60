@@ -3,7 +3,7 @@ import { MemoryEvidenceStore, silentLogger } from "../../src/adapters/memory.js"
 import { LocalApp } from "../../src/app/local-app.js";
 import { LABELS } from "../../src/core/vocabulary.js";
 import { DEV, FakeGitHub, FakeModel, PO, fixedClock } from "../helpers/fakes.js";
-import { loginPlan, storyBody } from "../helpers/fixtures.js";
+import { loginPlan, storyBody, taskBody } from "../helpers/fixtures.js";
 
 const BUILD_SHA = "c".repeat(40);
 
@@ -88,8 +88,17 @@ describe("LocalApp", () => {
         "https://docs.google.com/document/d/spec-123/edit",
       ];
       const attachments = [
-        { name: "mockup.png", mimeType: "image/png", dataBase64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" },
-        { name: "bang-gia.csv", mimeType: "text/csv", dataBase64: Buffer.from("loai,gia\nvip,100").toString("base64") },
+        {
+          name: "mockup.png",
+          mimeType: "image/png",
+          dataBase64:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+        },
+        {
+          name: "bang-gia.csv",
+          mimeType: "text/csv",
+          dataBase64: Buffer.from("loai,gia\nvip,100").toString("base64"),
+        },
       ];
 
       const draft = await app.draftPlan({
@@ -103,7 +112,9 @@ describe("LocalApp", () => {
       expect(model.calls[0]?.user).toContain("<reference_links>");
       expect(model.calls[0]?.user).toContain(links[0]!);
       expect(model.calls[0]?.user).toContain(links[1]!);
-      expect(model.calls[0]?.user).toContain("The PO attached visual mockups, PDF documents, or data sheets");
+      expect(model.calls[0]?.user).toContain(
+        "The PO attached visual mockups, PDF documents, or data sheets",
+      );
       expect(model.calls[0]?.attachments).toEqual(attachments);
 
       // Create plan issues
@@ -153,6 +164,87 @@ describe("LocalApp", () => {
   });
 
   describe("work items", () => {
+    const addTree = () => {
+      const epic = github.addIssue({
+        title: "[Epic] Auth",
+        body: storyBody(),
+        labels: [LABELS.epic],
+      });
+      const story = github.addIssue({
+        title: "[Story] Login",
+        body: storyBody({ parent: `#${epic.number}` }),
+        labels: [LABELS.story],
+      });
+      const task = github.addIssue({
+        title: "[Task] Form",
+        body: taskBody({ parent: `#${story.number}` }),
+        labels: [LABELS.task],
+      });
+      const other = github.addIssue({
+        title: "[Story] Logout",
+        body: storyBody(),
+        labels: [LABELS.story],
+      });
+      return { epic, story, task, other };
+    };
+
+    it("deletes a work item together with all of its children, children first", async () => {
+      const { epic, story, task, other } = addTree();
+      const closed: number[] = [];
+      const close = github.closeIssue.bind(github);
+      github.closeIssue = async (number, reason) => {
+        closed.push(number);
+        return close(number, reason);
+      };
+
+      const result = await app.deleteWork(epic.number);
+      expect(result).toEqual({ deleted: [task.number, story.number, epic.number], failed: [] });
+      expect(closed).toEqual([task.number, story.number, epic.number]);
+      for (const number of closed) {
+        expect(await github.getIssue(number)).toMatchObject({
+          state: "closed",
+          stateReason: "not_planned",
+        });
+      }
+      expect((await app.listItems()).map((item) => item.number)).toEqual([other.number]);
+    });
+
+    it("deletes only the subtree of a child work item", async () => {
+      const { epic, story, task } = addTree();
+      expect(await app.deleteWork(story.number)).toEqual({
+        deleted: [task.number, story.number],
+        failed: [],
+      });
+      expect((await github.getIssue(epic.number)).state).toBe("open");
+    });
+
+    it("keeps a parent open when a child could not be deleted", async () => {
+      const { epic, story, task } = addTree();
+      const close = github.closeIssue.bind(github);
+      github.closeIssue = async (number, reason) => {
+        if (number === task.number) throw new Error("boom");
+        return close(number, reason);
+      };
+      const result = await app.deleteWork(epic.number);
+      expect(result.deleted).toEqual([]);
+      expect(result.failed).toEqual([{ number: task.number, error: "boom" }]);
+      expect((await github.getIssue(story.number)).state).toBe("open");
+      expect((await github.getIssue(epic.number)).state).toBe("open");
+    });
+
+    it("only lets a PO or maintainer delete work", async () => {
+      const { epic } = addTree();
+      github.viewerActor = DEV;
+      const asDev = new LocalApp({
+        github,
+        evidence,
+        model,
+        clock: fixedClock,
+        logger: silentLogger,
+      });
+      await expect(asDev.deleteWork(epic.number)).rejects.toMatchObject({ code: "E_ROLE" });
+      expect((await github.getIssue(epic.number)).state).toBe("open");
+    });
     it("moves a story through approve → ready → accept with one click each", async () => {
       const story = github.addIssue({
         title: "[Story] Login",

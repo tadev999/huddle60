@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>huddle60</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <script src="/theme.js?v=20261102_8"></script>
-    <link rel="stylesheet" href="/styles.css?v=20261102_9" />
-    <script type="module" src="/app.js?v=20261102_13"></script>
+    <script src="/theme.js?v=20261102_9"></script>
+    <link rel="stylesheet" href="/styles.css?v=20261102_13" />
+    <script type="module" src="/app.js?v=20261102_16"></script>
   </head>
   <body>
     <header class="topbar">
@@ -391,7 +391,7 @@
               <div class="settings-details-body">
                 <p class="settings-note">
                   When you use Gemini, your key is sent directly to Google and is not stored on the
-                  Huddle60 server.
+                  huddle60 server.
                 </p>
                 <label for="input-gemini-key">Gemini API key</label>
                 <div class="input-row">
@@ -567,6 +567,14 @@
                 title="Open on GitHub"
                 >↗ GitHub</a
               >
+              <button
+                id="spec-share-btn"
+                type="button"
+                class="btn ghost tiny btn-share-task"
+                title="Copy a link to share with your team"
+              >
+                🔗 Share
+              </button>
             </div>
             <h2>Edit specification &amp; plan (spec-driven)</h2>
           </div>
@@ -642,6 +650,15 @@
 
         <div class="spec-modal-footer">
           <div class="spec-footer-left">
+            <button
+              id="spec-btn-delete"
+              class="btn ghost danger-btn"
+              type="button"
+              title="Delete this work and all child work (closed as not planned on GitHub)"
+              hidden
+            >
+              🗑 Delete work
+            </button>
             <span id="spec-save-status" class="status-msg small"></span>
           </div>
           <div class="row">
