@@ -7,7 +7,7 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <script src="/theme.js?v=20261102_9"></script>
     <link rel="stylesheet" href="/styles.css?v=20261102_13" />
-    <script type="module" src="/app.js?v=20261102_16"></script>
+    <script type="module" src="/app.js?v=20261102_17"></script>
   </head>
   <body>
     <header class="topbar">
@@ -47,6 +47,9 @@
       </div>
       <nav class="tabs" role="tablist">
         <button class="tab active" data-view="items" role="tab" aria-selected="true">Work</button>
+        <button class="tab" data-view="inbox" role="tab" aria-selected="false">
+          Inbox <span id="inbox-badge" class="count-badge" hidden>0</span>
+        </button>
         <button class="tab" data-view="plan" role="tab" aria-selected="false">Plan</button>
         <button class="tab" data-view="settings" role="tab" aria-selected="false">Settings</button>
       </nav>
@@ -159,6 +162,42 @@
             <tbody id="items-body"></tbody>
           </table>
           <p id="items-empty" class="empty" hidden></p>
+        </div>
+      </section>
+
+      <section id="view-inbox" class="view" hidden>
+        <div class="view-heading">
+          <div>
+            <h1>Inbox &amp; Triage</h1>
+            <p>
+              Raw GitHub Issues created directly on GitHub. Convert them into AI-DLC Stories for PO
+              approval.
+            </p>
+          </div>
+          <span class="eyebrow">INCOMING ISSUES</span>
+        </div>
+        <div class="toolbar">
+          <div class="inbox-actions">
+            <button id="btn-inbox-refresh" class="btn small ghost" type="button">
+              ↻ Refresh Inbox
+            </button>
+          </div>
+        </div>
+        <div class="card" id="inbox-card">
+          <table class="items" id="inbox-table">
+            <thead>
+              <tr>
+                <th style="width: 80px">Issue</th>
+                <th>Title &amp; Description</th>
+                <th style="width: 140px">Author</th>
+                <th class="actions-col" style="width: 220px">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="inbox-body"></tbody>
+          </table>
+          <p id="inbox-empty" class="empty" hidden>
+            No raw GitHub issues found. All open issues have been triaged into AI-DLC work items.
+          </p>
         </div>
       </section>
 

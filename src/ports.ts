@@ -88,6 +88,7 @@ export interface GitHubPort {
 export interface LocalGitHubPort extends GitHubPort {
   viewer(): Promise<Actor>;
   listOpenIssuesWithLabel(label: string): Promise<IssueData[]>;
+  listOpenIssues?(): Promise<IssueData[]>;
   createComment(issueNumber: number, body: string): Promise<CommentData>;
   /** Latest comment written by a bot that contains `marker`. */
   findBotComment(issueNumber: number, marker: string): Promise<CommentData | null>;

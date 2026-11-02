@@ -225,6 +225,23 @@ export function createRoutes(deps: RouteDeps): Route[] {
     },
     {
       method: "GET",
+      pattern: /^\/api\/inbox$/u,
+      handle: async (_m, _b, tenant) => (await getAppFor(tenant)).listInbox(),
+    },
+    {
+      method: "POST",
+      pattern: /^\/api\/inbox\/(\d{1,9})\/convert$/u,
+      signedIn: true,
+      handle: async (m, body, tenant) => {
+        const instruction =
+          body && typeof body === "object" && "instruction" in body
+            ? String((body as { instruction: unknown }).instruction || "")
+            : undefined;
+        return (await getAppFor(tenant)).convertInboxToStory(Number(m[1]), instruction);
+      },
+    },
+    {
+      method: "GET",
       pattern: /^\/api\/builds$/u,
       handle: async (_m, _b, tenant) => (await getAppFor(tenant)).builds(),
     },

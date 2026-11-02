@@ -255,13 +255,19 @@ export class FakeGitHub implements LocalGitHubPort {
     return (await this.listIssuesWithLabel(label)).filter((issue) => issue.state === "open");
   }
 
+  async listOpenIssues(): Promise<IssueData[]> {
+    return [...this.issues.values()]
+      .filter((issue) => issue.state === "open" && !issue.isPullRequest)
+      .map((issue) => structuredClone(issue));
+  }
+
   async createComment(issueNumber: number, body: string): Promise<CommentData> {
     return this.addComment(issueNumber, this.viewerActor, body);
   }
 
   async findBotComment(issueNumber: number, marker: string): Promise<CommentData | null> {
     const found = this.commentsOn(issueNumber)
-      .filter((comment) => comment.author.type === "Bot" && comment.body.includes(marker))
+      .filter((comment) => comment.body.includes(marker))
       .at(-1);
     return found ? { id: found.id, body: found.body, author: found.author } : null;
   }

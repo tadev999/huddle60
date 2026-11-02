@@ -6,6 +6,7 @@ const POLL_MAX = 60;
 const state = {
   session: null,
   items: [],
+  inbox: [],
   filter: "mine",
   query: "",
   pending: new Map(), // issueNumber -> action
@@ -176,7 +177,7 @@ function displayTitle(item) {
 
 function needsMe(item) {
   if (hasRole("po") && item.kind !== "task" && item.stage !== "awaiting-ready") return true;
-  if (hasRole("dev") && item.stage === "awaiting-ready") return true;
+  if (hasRole("dev") && item.stage === "awaiting-ready" && isItemApproved(item)) return true;
   return false;
 }
 
@@ -236,10 +237,19 @@ function treeRows() {
   return rows;
 }
 
+function isItemApproved(item) {
+  if (item.kind === "task") {
+    if (!item.parent) return false;
+    const parent = state.items.find((other) => other.number === item.parent);
+    if (!parent) return false;
+    return Boolean(parent.approvedBy || (parent.stage && parent.stage !== "awaiting-approval"));
+  }
+  return Boolean(item.approvedBy || (item.stage && item.stage !== "awaiting-approval"));
+}
+
 function readyLanes(item) {
-  const lanes = Object.entries(state.session.lanes);
-  if (item.kind === "task" || item.stage !== "awaiting-approval")
-    return lanes.map(([lane]) => lane);
+  const lanes = Object.entries(state.session?.lanes || {});
+  if (isItemApproved(item)) return lanes.map(([lane]) => lane);
   return lanes.filter(([, lane]) => !lane.requiresPoApproval).map(([lane]) => lane);
 }
 
@@ -330,29 +340,9 @@ function actionsFor(item) {
   } else {
     // 1. Primary state transition CTAs (Approve / Ready / Accept)
     const hasChildren = state.items.some((other) => other.parent === item.number);
-    if (hasRole("dev") && item.stage !== "in-progress" && (item.kind === "task" || !hasChildren)) {
-      const lanes = readyLanes(item);
-      if (lanes.length > 0) {
-        const select = h(
-          "select",
-          { title: "Delivery lane" },
-          lanes.map((lane) => h("option", { value: lane, selected: lane === "standard" }, lane)),
-        );
-        controls.push(
-          select,
-          h(
-            "button",
-            {
-              class: "btn",
-              title: "Developer confirms readiness",
-              onclick: (e) =>
-                decide(e.currentTarget, item, { action: "ready", lane: select.value }),
-            },
-            "Ready",
-          ),
-        );
-      }
-    }
+    const approved = isItemApproved(item);
+
+    // If item is awaiting approval and user is PO, Approve is the primary action
     if (hasRole("po") && item.kind !== "task" && item.stage === "awaiting-approval") {
       controls.push(
         h(
@@ -366,6 +356,71 @@ function actionsFor(item) {
         ),
       );
     }
+
+    // DEV Ready action (Tasks, or Stories whether standalone or with child tasks)
+    const canReady = hasRole("dev") && item.stage !== "in-progress" && item.kind !== "epic";
+    if (canReady) {
+      const laneEntries = Object.entries(state.session?.lanes || {});
+      if (laneEntries.length > 0) {
+        let readyBtn;
+        const select = h(
+          "select",
+          {
+            title: "Delivery lane",
+            onchange: () => updateReadyState(),
+          },
+          laneEntries.map(([name, laneConfig]) => {
+            const reqPo = Boolean(laneConfig.requiresPoApproval);
+            const needsPo = !approved && reqPo;
+            return h(
+              "option",
+              {
+                value: name,
+                selected: approved ? name === "standard" : name === "fast",
+              },
+              needsPo ? `${name} (needs PO approval)` : name,
+            );
+          }),
+        );
+
+        const buttonLabel = hasChildren ? "Ready (1 PR)" : "Ready";
+        const buttonTitle = hasChildren
+          ? "Confirm readiness for the entire story in a single PR (all criteria)"
+          : "Developer confirms readiness";
+
+        readyBtn = h(
+          "button",
+          {
+            class: "btn",
+            title: buttonTitle,
+            onclick: (e) => decide(e.currentTarget, item, { action: "ready", lane: select.value }),
+          },
+          buttonLabel,
+        );
+
+        const updateReadyState = () => {
+          const selectedLane = select.value;
+          const laneConfig = state.session?.lanes?.[selectedLane];
+          const reqPo = Boolean(laneConfig?.requiresPoApproval);
+          if (!approved && reqPo) {
+            readyBtn.disabled = true;
+            if (item.kind === "task") {
+              const parentNum = item.parent ? `#${item.parent}` : "story";
+              readyBtn.title = `Parent story ${parentNum} requires PO approval before DEV can confirm ready in ${selectedLane} lane.`;
+            } else {
+              readyBtn.title = `Requires PO approval before DEV can confirm ready in ${selectedLane} lane.`;
+            }
+          } else {
+            readyBtn.disabled = false;
+            readyBtn.title = buttonTitle;
+          }
+        };
+
+        updateReadyState();
+        controls.push(select, readyBtn);
+      }
+    }
+
     if (hasRole("po") && item.kind !== "task" && item.stage === "in-progress") {
       controls.push(
         h(
@@ -660,6 +715,7 @@ async function loadItems(force = false) {
     state.itemsStatus = "ready";
     renderItems();
     focusTargetTask();
+    loadInbox().catch(() => {});
   } catch (error) {
     if (version === state.repositoryVersion && request === state.itemsRequest) {
       state.items = [];
@@ -671,6 +727,139 @@ async function loadItems(force = false) {
   } finally {
     if (version === state.repositoryVersion && request === state.itemsRequest)
       button.disabled = false;
+  }
+}
+
+async function loadInbox() {
+  if (state.session?.status !== "ready") return;
+  const refreshBtn = $("#btn-inbox-refresh");
+  if (refreshBtn) refreshBtn.disabled = true;
+  try {
+    const items = await api("/api/inbox");
+    state.inbox = items;
+    updateInboxBadge();
+    renderInbox();
+  } catch (error) {
+    logError("Could not load inbox", error);
+  } finally {
+    if (refreshBtn) refreshBtn.disabled = false;
+  }
+}
+
+function updateInboxBadge() {
+  const badge = $("#inbox-badge");
+  if (!badge) return;
+  const count = state.inbox?.length || 0;
+  badge.textContent = count;
+  badge.hidden = count === 0;
+}
+
+function renderInbox() {
+  const body = $("#inbox-body");
+  const empty = $("#inbox-empty");
+  if (!body) return;
+  body.replaceChildren();
+
+  if (!state.inbox || state.inbox.length === 0) {
+    if (empty) empty.hidden = false;
+    return;
+  }
+  if (empty) empty.hidden = true;
+
+  for (const item of state.inbox) {
+    const preview = item.body
+      ? item.body.slice(0, 160) + (item.body.length > 160 ? "..." : "")
+      : "(No description provided)";
+
+    const labels = (item.labels || []).map((label) =>
+      h("span", { class: "inbox-label-tag" }, label),
+    );
+
+    const convertBtn = h(
+      "button",
+      {
+        class: "btn primary small",
+        title: "AI converts this raw issue into a standardized Story specification",
+        onclick: async (e) => {
+          await convertInboxIssue(e.currentTarget, item);
+        },
+      },
+      "⚡ Convert to Story",
+    );
+
+    const row = h(
+      "tr",
+      {},
+      h(
+        "td",
+        {},
+        h("a", { href: item.url, target: "_blank", rel: "noreferrer" }, `#${item.number}`),
+      ),
+      h(
+        "td",
+        {},
+        h("strong", {}, item.title),
+        h("div", { class: "inbox-desc-preview" }, preview),
+        labels.length > 0 ? h("div", { class: "inbox-labels" }, labels) : null,
+      ),
+      h("td", { class: "meta" }, `@${item.author}`),
+      h(
+        "td",
+        { class: "actions-col" },
+        convertBtn,
+        h(
+          "a",
+          {
+            class: "btn ghost small",
+            href: item.url,
+            target: "_blank",
+            rel: "noreferrer",
+            title: "View original on GitHub",
+          },
+          "View ↗",
+        ),
+      ),
+    );
+
+    body.append(row);
+  }
+}
+
+async function convertInboxIssue(button, item) {
+  const update = log("pending", `Converting #${item.number} to Story with AI...`);
+  const result = await withBusy(button, async () => {
+    try {
+      return await api(`/api/inbox/${item.number}/convert`, {});
+    } catch (error) {
+      logError(`Failed to convert #${item.number}`, error);
+      update("fail", `Failed to convert #${item.number}: ${error.message}`);
+      return null;
+    }
+  });
+
+  if (result) {
+    update("ok", `Converted #${item.number} into Story: ${result.title}`);
+    await loadInbox();
+    await loadItems(true);
+    await openDialog({
+      title: `Converted #${item.number} to Story`,
+      body: h(
+        "div",
+        {},
+        h(
+          "p",
+          { style: "color: var(--accent); font-weight: 600; margin-bottom: 8px;" },
+          `Issue #${item.number} is now a standardized AI-DLC Story!`,
+        ),
+        h(
+          "p",
+          {},
+          "It has been added to your Work board with acceptance criteria. As PO, you can now review and approve it.",
+        ),
+      ),
+      okLabel: "Go to Work",
+    });
+    switchView("items");
   }
 }
 
@@ -707,7 +896,30 @@ async function pollReply(issueNumber, commentId, action, update) {
           { text: reply.body },
         );
         state.pending.delete(issueNumber);
-        await loadItems();
+        await loadItems(true);
+        if (!reply.ok) {
+          await openDialog({
+            title: `AI-DLC Protocol: #${issueNumber} ${action} rejected`,
+            body: h(
+              "div",
+              {},
+              h(
+                "p",
+                { style: "color: var(--danger, #cf222e); font-weight: 600; margin-bottom: 8px;" },
+                "GitHub Actions rejected the request:",
+              ),
+              h(
+                "pre",
+                {
+                  style:
+                    "white-space: pre-wrap; font-size: 13px; line-height: 1.4; padding: 10px; background: var(--bg-subtle, #f6f8fa); border: 1px solid var(--border, #d0d7de); border-radius: 6px;",
+                },
+                reply.body || "No detailed message received from workflow.",
+              ),
+            ),
+            okLabel: "Dismiss",
+          });
+        }
         return;
       }
     } catch (error) {
@@ -715,7 +927,7 @@ async function pollReply(issueNumber, commentId, action, update) {
     }
   }
   state.pending.delete(issueNumber);
-  renderItems();
+  await loadItems(true);
   update("fail", `#${issueNumber} ${action}: no response from GitHub Actions yet`, {
     text: "Check the huddle60 workflow in GitHub Actions, then refresh.",
   });
@@ -1968,10 +2180,13 @@ function switchView(view) {
     tab.setAttribute("aria-selected", String(tab.dataset.view === view));
   }
   $("#view-items").hidden = view !== "items";
+  $("#view-inbox").hidden = view !== "inbox";
   $("#view-plan").hidden = view !== "plan";
   $("#view-settings").hidden = view !== "settings";
 
-  if (view === "settings") {
+  if (view === "inbox") {
+    loadInbox();
+  } else if (view === "settings") {
     loadSettings();
   }
 }
@@ -2372,7 +2587,11 @@ async function boot() {
     state.query = event.target.value;
     renderItems();
   });
-  $("#refresh").addEventListener("click", () => loadItems(true));
+  $("#refresh").addEventListener("click", () => {
+    state.pending.clear();
+    loadItems(true);
+  });
+  $("#btn-inbox-refresh")?.addEventListener("click", () => loadInbox());
   $("#btn-guest-login")?.addEventListener("click", () => switchView("settings"));
   $("#log-clear").addEventListener("click", () => $("#log").replaceChildren());
   $("#plan-form").addEventListener("submit", generatePlan);

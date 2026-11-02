@@ -469,6 +469,15 @@ export class OctokitGitHub implements LocalGitHubPort {
     return (items as RawIssue[]).map(toIssue).filter((issue) => !issue.isPullRequest);
   }
 
+  async listOpenIssues(): Promise<IssueData[]> {
+    const items = await this.octokit.paginate(this.octokit.rest.issues.listForRepo, {
+      ...this.base,
+      state: "open",
+      per_page: 100,
+    });
+    return (items as RawIssue[]).map(toIssue).filter((issue) => !issue.isPullRequest);
+  }
+
   async createComment(issueNumber: number, body: string): Promise<CommentData> {
     const { data } = await this.octokit.rest.issues.createComment({
       ...this.base,
@@ -484,9 +493,7 @@ export class OctokitGitHub implements LocalGitHubPort {
       issue_number: issueNumber,
       per_page: 100,
     });
-    const found = comments
-      .filter((comment) => comment.user?.type === "Bot" && (comment.body ?? "").includes(marker))
-      .at(-1);
+    const found = comments.filter((comment) => (comment.body ?? "").includes(marker)).at(-1);
     return found
       ? { id: found.id, body: found.body ?? "", author: toActor(found.user as RawUser | null) }
       : null;

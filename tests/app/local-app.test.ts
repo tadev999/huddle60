@@ -402,5 +402,50 @@ describe("LocalApp", () => {
         /requires the po role/i,
       );
     });
+
+    it("lists inbox issues that lack AI-DLC labels", async () => {
+      const rawIssue = await github.createIssue({
+        title: "User created issue: button broken",
+        body: "The button on mobile does not work",
+        labels: ["bug"],
+      });
+      const story = await github.createIssue({
+        title: "[Story] Work item",
+        body: storyBody(),
+        labels: [LABELS.story],
+      });
+
+      const inbox = await app.listInbox();
+      expect(inbox.some((i) => i.number === rawIssue.number)).toBe(true);
+      expect(inbox.some((i) => i.number === story.number)).toBe(false);
+    });
+
+    it("converts an inbox issue into an AI-DLC Story", async () => {
+      const rawIssue = await github.createIssue({
+        title: "User created issue: button broken",
+        body: "The button on mobile does not work",
+        labels: ["bug"],
+      });
+
+      model.respondWith({
+        title: "[Story] Fix mobile button",
+        body: "### Mục tiêu và người dùng\nFix the mobile login button.\n\n### Phạm vi\n- Trong phạm vi: login\n- Ngoài phạm vi: none\n\n### Tiêu chí nghiệm thu\n- AC-01: Given mobile user When clicks button Then login dialog opens.",
+      });
+
+      const converted = await app.convertInboxToStory(rawIssue.number);
+      expect(converted.issueNumber).toBe(rawIssue.number);
+      expect(converted.title).toContain("[Story]");
+      expect(converted.body).toContain("### Mục tiêu và người dùng");
+      expect(converted.body).toContain("### Tiêu chí nghiệm thu");
+
+      const updated = await github.getIssue(rawIssue.number);
+      expect(updated.labels).toContain(LABELS.story);
+
+      const items = await app.listItems(true);
+      expect(items.some((i) => i.number === rawIssue.number)).toBe(true);
+
+      const inbox = await app.listInbox();
+      expect(inbox.some((i) => i.number === rawIssue.number)).toBe(false);
+    });
   });
 });

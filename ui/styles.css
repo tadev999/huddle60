@@ -314,6 +314,41 @@ a:hover {
   border-color: var(--line);
   background: var(--panel-2);
 }
+.count-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--on-accent);
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.inbox-desc-preview {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  margin-top: 4px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  max-height: 60px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inbox-labels {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+.inbox-label-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
 .who {
   margin-left: auto;
   display: flex;

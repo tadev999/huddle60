@@ -16,6 +16,7 @@ import { bulletList, marker, questionLine, renderTree, sanitize } from "../core/
 import {
   KIND_LABEL,
   LABELS,
+  LEGACY_LABELS,
   SECTIONS,
   kindFromLabels,
   type WorkItemKind,
@@ -85,6 +86,15 @@ export interface BuildView {
   path: string;
   headSha: string;
   url: string;
+}
+
+export interface InboxItem {
+  number: number;
+  title: string;
+  url: string;
+  body: string;
+  labels: string[];
+  author: string;
 }
 
 interface Draft {
@@ -922,6 +932,108 @@ ${instruction}`;
     } catch {
       throw new AiDlcError("E_PLAN_SCHEMA", "AI returned invalid response format.");
     }
+  }
+
+  async listInbox(): Promise<InboxItem[]> {
+    const allOpen = this.deps.github.listOpenIssues ? await this.deps.github.listOpenIssues() : [];
+    const aiDlcLabels = new Set<string>([
+      LABELS.epic,
+      LABELS.story,
+      LABELS.task,
+      LABELS.request,
+      LABELS.planDraft,
+      LABELS.planCreated,
+      LABELS.planPartial,
+      LABELS.exempt,
+      ...Object.values(LEGACY_LABELS),
+    ]);
+
+    return allOpen
+      .filter((issue) => !issue.labels.some((label) => aiDlcLabels.has(label)))
+      .sort((a, b) => b.number - a.number)
+      .map((issue) => ({
+        number: issue.number,
+        title: issue.title,
+        url: `${this.repoUrl}/issues/${issue.number}`,
+        body: issue.body || "",
+        labels: issue.labels,
+        author: issue.author?.login || "unknown",
+      }));
+  }
+
+  async convertInboxToStory(
+    issueNumber: number,
+    instruction?: string,
+  ): Promise<{ issueNumber: number; title: string; body: string }> {
+    const policy = await this.workflow.policy();
+    await this.requireRole(policy, "po", "convert inbox issue to story");
+    const issue = await this.deps.github.getIssue(issueNumber);
+
+    let newTitle = issue.title.startsWith("[Story]")
+      ? issue.title
+      : `[Story] ${issue.title.replace(/^\[.*?\]\s*/u, "")}`;
+    let newBody = issue.body || "";
+
+    if (this.deps.model) {
+      const system = `You are an AI-DLC specification engineer.
+A user created a raw GitHub Issue (bug report, feature request, or feedback).
+Your job is to convert this raw issue into a standardized, testable AI-DLC Story specification.
+
+Rules:
+1. Title must be concise and prefixed with "[Story] ".
+2. The body must follow the AI-DLC Vertical Testable Slice format with these Markdown sections:
+### Mục tiêu và người dùng
+(State who the user is and what problem this solves)
+
+### Phạm vi
+- Trong phạm vi:
+- Ngoài phạm vi:
+
+### Tiêu chí nghiệm thu
+- AC-01: Given [precondition] When [action/event] Then [expected outcome]
+(Provide at least 1-3 testable Given/When/Then acceptance criteria)
+
+3. Do not ask technical questions. Make reasonable engineering assumptions.
+4. Output valid JSON matching the schema.`;
+
+      const userPrompt = `Raw Issue #${issueNumber}:
+Title: ${issue.title}
+Body:
+${issue.body || "(No description provided)"}
+${instruction ? `\nAdditional PO Instruction:\n${instruction}` : ""}`;
+
+      const jsonSchema = {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          body: { type: "string" },
+        },
+        required: ["title", "body"],
+        additionalProperties: false,
+      };
+
+      const res = await this.deps.model.generateJson({
+        system,
+        user: userPrompt,
+        jsonSchema,
+      });
+
+      try {
+        const parsed = JSON.parse(res.text) as { title: string; body: string };
+        newTitle = parsed.title;
+        newBody = parsed.body;
+      } catch {
+        newBody = `### Mục tiêu và người dùng\n\n${issue.body || issue.title}\n\n### Phạm vi\n\n- Trong phạm vi: ${issue.title}\n- Ngoài phạm vi:\n\n### Tiêu chí nghiệm thu\n\n- AC-01: Given ${issue.title} When user interacts Then it works as expected.`;
+      }
+    } else {
+      newBody = `### Mục tiêu và người dùng\n\n${issue.body || issue.title}\n\n### Phạm vi\n\n- Trong phạm vi: ${issue.title}\n- Ngoài phạm vi:\n\n### Tiêu chí nghiệm thu\n\n- AC-01: Given ${issue.title} When user interacts Then it works as expected.`;
+    }
+
+    await this.deps.github.updateIssue(issueNumber, { title: newTitle, body: newBody });
+    await this.deps.github.addLabels(issueNumber, [LABELS.story]);
+    this.invalidateItemsCache();
+
+    return { issueNumber, title: newTitle, body: newBody };
   }
 }
 
