@@ -15,9 +15,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --no-audit --no-fund
+      - run: npm run build
       - run: npm run typecheck
       - run: npm test
       - run: npm run format:check
-      - run: npm run build
       - name: Validate example policy
         run: node dist/cli.js validate-policy templates/.github/huddle60/policy.yml

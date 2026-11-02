@@ -1,4 +1,7 @@
+import { existsSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { request as httpRequest, createServer, type Server } from "node:http";
+import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -12,6 +15,9 @@ describe("local browser app server", () => {
   let port: number;
 
   beforeAll(async () => {
+    if (!existsSync(join(uiDir, "engine.js"))) {
+      await writeFile(join(uiDir, "engine.js"), "/* engine.js mock for tests */\n");
+    }
     let handler: ReturnType<typeof createAppHandler>;
     server = createServer((req, res) => void handler(req, res));
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
